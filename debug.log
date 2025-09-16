@@ -1,0 +1,90 @@
+2025-09-16 11:50:21,302 - debug_toolkit - INFO - INFO: テストメッセージ
+2025-09-16 11:50:21,302 - debug_toolkit - INFO - TRACE: 関数 'slow_function' を実行開始
+2025-09-16 11:50:21,302 - debug_toolkit - INFO - TRACE: 引数: args=(), kwargs={}
+2025-09-16 11:50:21,402 - debug_toolkit - INFO - TRACE: 関数 'slow_function' 実行完了 (実行時間: 0.1001秒)
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - TRACE: 戻り値: done
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - INFO: === パフォーマンス分析 ===
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - INFO: 関数 'slow_function': 0.1001秒
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - TRACE: 関数 'test_function' を実行開始
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - TRACE: 引数: args=(3, 4), kwargs={}
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - TRACE: 関数 'test_function' 実行完了 (実行時間: 0.0000秒)
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - TRACE: 戻り値: 7
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - WARNING: 3個の潜在的な問題を発見
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - WARNING: 行2: デバッグprint文 - print文が残っている可能性があります
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - WARNING: 行3: TODO/FIXME - 未完了のタスクがあります
+2025-09-16 11:50:21,403 - debug_toolkit - INFO - WARNING: 行6: 広範囲例外処理 - 具体的な例外型を指定することを推奨
+2025-09-16 11:50:21,404 - debug_toolkit - INFO - INFO: [CACHE] 結果をキャッシュ: expensive_function
+2025-09-16 11:50:21,404 - debug_toolkit - INFO - INFO: [CACHE] キャッシュヒット: expensive_function
+2025-09-16 11:50:21,404 - debug_toolkit - INFO - INFO: [VALIDATION] 関数 'divide_function' の入力値検証完了
+2025-09-16 11:50:21,409 - debug_toolkit - INFO - INFO: [LOG] 関数 'simple_function' 開始
+2025-09-16 11:50:21,409 - debug_toolkit - INFO - INFO: [LOG] 関数 'simple_function' 正常終了
+2025-09-16 11:50:21,409 - debug_toolkit - INFO - INFO: [API] 関数 'simple_function' API応答生成完了
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - INFO: [LOG] 関数 'calculator' 開始
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - TRACE: 関数 'calculator' を実行開始
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - TRACE: 引数: args=(5, 3, 'add'), kwargs={}
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - TRACE: 関数 'calculator' 実行完了 (実行時間: 0.0000秒)
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - TRACE: 戻り値: 8
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - INFO: [LOG] 関数 'calculator' 正常終了
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - INFO: [CACHE] 結果をキャッシュ: calculator
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - INFO: [LOG] 関数 'calculator' 開始
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - TRACE: 関数 'calculator' を実行開始
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - TRACE: 引数: args=(5, 3, 'multiply'), kwargs={}
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - TRACE: 関数 'calculator' 実行完了 (実行時間: 0.0000秒)
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - TRACE: 戻り値: 15
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - INFO: [LOG] 関数 'calculator' 正常終了
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - INFO: [CACHE] 結果をキャッシュ: calculator
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - INFO: === パフォーマンス分析 ===
+2025-09-16 11:50:21,410 - debug_toolkit - INFO - INFO: 関数 'calculator': 0.0000秒
+2025-09-16 11:50:36,379 - debug_toolkit - INFO - INFO: テストメッセージ
+2025-09-16 11:50:36,380 - debug_toolkit - INFO - TRACE: 関数 'slow_function' を実行開始
+2025-09-16 11:50:36,380 - debug_toolkit - INFO - TRACE: 引数: args=(), kwargs={}
+2025-09-16 11:50:36,480 - debug_toolkit - INFO - TRACE: 関数 'slow_function' 実行完了 (実行時間: 0.1001秒)
+2025-09-16 11:50:36,480 - debug_toolkit - INFO - TRACE: 戻り値: done
+2025-09-16 11:50:36,480 - debug_toolkit - INFO - INFO: === パフォーマンス分析 ===
+2025-09-16 11:50:36,480 - debug_toolkit - INFO - INFO: 関数 'slow_function': 0.1001秒
+2025-09-16 11:50:36,480 - debug_toolkit - INFO - TRACE: 関数 'test_function' を実行開始
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - TRACE: 引数: args=(3, 4), kwargs={}
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - TRACE: 関数 'test_function' 実行完了 (実行時間: 0.0000秒)
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - TRACE: 戻り値: 7
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - WARNING: 3個の潜在的な問題を発見
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - WARNING: 行2: デバッグprint文 - print文が残っている可能性があります
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - WARNING: 行3: TODO/FIXME - 未完了のタスクがあります
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - WARNING: 行6: 広範囲例外処理 - 具体的な例外型を指定することを推奨
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - INFO: [CACHE] 結果をキャッシュ: expensive_function
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - INFO: [CACHE] キャッシュヒット: expensive_function
+2025-09-16 11:50:36,481 - debug_toolkit - INFO - INFO: [VALIDATION] 関数 'divide_function' の入力値検証完了
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - INFO: [LOG] 関数 'simple_function' 開始
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - INFO: [LOG] 関数 'simple_function' 正常終了
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - INFO: [API] 関数 'simple_function' API応答生成完了
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - INFO: [LOG] 関数 'calculator' 開始
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - TRACE: 関数 'calculator' を実行開始
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - TRACE: 引数: args=(5, 3, 'add'), kwargs={}
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - TRACE: 関数 'calculator' 実行完了 (実行時間: 0.0000秒)
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - TRACE: 戻り値: 8
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - INFO: [LOG] 関数 'calculator' 正常終了
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - INFO: [CACHE] 結果をキャッシュ: calculator
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - INFO: [LOG] 関数 'calculator' 開始
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - TRACE: 関数 'calculator' を実行開始
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - TRACE: 引数: args=(5, 3, 'multiply'), kwargs={}
+2025-09-16 11:50:36,482 - debug_toolkit - INFO - TRACE: 関数 'calculator' 実行完了 (実行時間: 0.0000秒)
+2025-09-16 11:50:36,483 - debug_toolkit - INFO - TRACE: 戻り値: 15
+2025-09-16 11:50:36,483 - debug_toolkit - INFO - INFO: [LOG] 関数 'calculator' 正常終了
+2025-09-16 11:50:36,483 - debug_toolkit - INFO - INFO: [CACHE] 結果をキャッシュ: calculator
+2025-09-16 11:50:36,483 - debug_toolkit - INFO - INFO: === パフォーマンス分析 ===
+2025-09-16 11:50:36,483 - debug_toolkit - INFO - INFO: 関数 'calculator': 0.0000秒
+2025-09-16 11:50:45,617 - __main__ - INFO - INFO: 関数トレースのテスト開始
+2025-09-16 11:50:45,617 - __main__ - INFO - TRACE: 関数 'sample_function' を実行開始
+2025-09-16 11:50:45,617 - __main__ - INFO - TRACE: 引数: args=(5, 3), kwargs={}
+2025-09-16 11:50:45,717 - __main__ - INFO - TRACE: 関数 'sample_function' 実行完了 (実行時間: 0.1001秒)
+2025-09-16 11:50:45,717 - __main__ - INFO - TRACE: 戻り値: 25
+2025-09-16 11:50:45,717 - __main__ - INFO - INFO: 結果: 25
+2025-09-16 11:50:45,717 - __main__ - INFO - INFO: === パフォーマンス分析 ===
+2025-09-16 11:50:45,718 - __main__ - INFO - INFO: 関数 'sample_function': 0.1001秒
+2025-09-16 11:50:45,718 - __main__ - INFO - INFO: コード分析テスト開始
+2025-09-16 11:50:45,718 - __main__ - INFO - WARNING: 2個の潜在的な問題を発見
+2025-09-16 11:50:45,718 - __main__ - INFO - WARNING: 行4: TODO/FIXME - 未完了のタスクがあります
+2025-09-16 11:50:45,718 - __main__ - INFO - WARNING: 行7: 広範囲例外処理 - 具体的な例外型を指定することを推奨
+2025-09-16 11:50:53,234 - debug_toolkit - INFO - ERROR: 計算機エラー: division by zero
+2025-09-16 11:50:53,234 - debug_toolkit - INFO - ERROR: ファイル読み込みエラー: [Errno 2] No such file or directory: 'nonexistent.txt'
+2025-09-16 11:50:53,234 - debug_toolkit - INFO - ERROR: 数値処理エラー: invalid literal for int() with base 10: 'abc'
+2025-09-16 11:50:53,334 - debug_toolkit - INFO - ERROR: ネットワークエラー: 'fake_connection'
