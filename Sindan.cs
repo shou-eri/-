@@ -46,7 +46,7 @@ namespace cAlgo
         [Parameter("TP R:R", Group = "Risk", DefaultValue = 1.5)]
         public double RMultiple { get; set; }
 
-        [Parameter("Max Spread (pips)", Group = "Risk", DefaultValue = 0.0, MinValue = 0.0)]
+        [Parameter("Max Spread (pips)", Group = "Risk", DefaultValue = 2.0, MinValue = 0.0)]
         public double MaxSpreadPips { get; set; }
 
         [Parameter("Max Market Range (pips)", Group = "Risk", DefaultValue = 0, MinValue = 0)]
@@ -283,8 +283,7 @@ namespace cAlgo
         [Parameter("Cooldown Bars", DefaultValue = 0, MinValue = 0)]
         public int CooldownBars { get; set; }
 
-        [Parameter("Max Spread (pips)", DefaultValue = 2.0, MinValue = 0.0)]
-        public double SpreadMaxPips { get; set; }
+
 
         [Parameter("Label", DefaultValue = "Sindan")] public string Label { get; set; }
         [Parameter("Timer Interval (ms)", DefaultValue = 250)]
@@ -402,7 +401,7 @@ namespace cAlgo
         private bool SpreadTooWide()
     {
         double spreadPips = (Symbol.Ask - Symbol.Bid) / Symbol.PipSize;
-        return (SpreadMaxPips > 0.0) && (spreadPips > SpreadMaxPips);
+        return (MaxSpreadPips > 0.0) && (spreadPips > MaxSpreadPips);
     }
         private void REJ(string code, string msg) => Print($"[REJ][{code}] {msg}");
 
@@ -471,7 +470,7 @@ private bool MicroConfirmShort() {
     int maxDaily = EffectiveMaxTradesPerDay();
     if (maxDaily > 0 && _tradesToday >= maxDaily) return false;
     if (HasOpen(label, side)) return false;
-    // SpreadTooWide() が SpreadMaxPips を見ているので二重条件は不要
+    // SpreadTooWide() が MaxSpreadPips を見ているので二重条件は不要
     if (SpreadTooWide()) return false;
     return true;
 }
@@ -797,8 +796,8 @@ else // trigSell
         { REJ("COOL", $"wait {CooldownBars - (curBar - lastTradeBar)} bars"); return; }
 
         // 1) スプレッド
-        if (SpreadMaxPips > 0 && spreadPips > SpreadMaxPips)
-        { REJ("SPREAD", $"{spreadPips:F2}p > {SpreadMaxPips:F2}p"); return; }
+        if (MaxSpreadPips > 0 && spreadPips > MaxSpreadPips)
+        { REJ("SPREAD", $"{spreadPips:F2}p > {MaxSpreadPips:F2}p"); return; }
 
         // 2) ストップ距離
         double stopPips = Math.Abs((slPrice - entry)) / Symbol.PipSize;
@@ -1313,7 +1312,7 @@ private bool TryPullbackShortPhysics(out double sl, out string why)
         // ---------- Orders ----------
         private void PlaceTrade(TradeType side, double slOverride)
         {
-            double entry = Bars.ClosePrices.LastValue;
+            double entry = (side == TradeType.Buy) ? Symbol.Ask : Symbol.Bid;
             double atr   = Math.Max(1e-10, _atrC);
             double kSL   = Math.Max(0.3, TrailAtrK);
             double slPrice = (side == TradeType.Buy) ? entry - kSL * atr : entry + kSL * atr;
