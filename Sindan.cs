@@ -299,7 +299,8 @@ namespace cAlgo
 
         // ===== State =====
         private AverageTrueRange _atr;
-        private ExponentialMovingAverage _ema;        private DateTime _lastTrade = DateTime.MinValue;
+        private ExponentialMovingAverage _ema;
+        private DateTime _lastTrade = DateTime.MinValue;
         private DateTime _day = DateTime.MinValue;
         private volatile bool  _timerBusy = false;
         private DateTime _lastTimerTs = DateTime.MinValue;
