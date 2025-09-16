@@ -1361,7 +1361,7 @@ if (!double.IsNaN(_rMultipleOverride)) {
             if (volL <= 0){ if (Verbose) Print("[BLOCK]vol==0"); return;}
 
             // …entry/slPrice/tpPrice/slPips/tpPips/volUnits を計算し終えた直後に置く
-long v = (long)Math.Round(vol);
+long v = volL;
 if (v <= 0) { Print("[ORDER SKIP] volume=0"); return; }
 
 if (double.IsNaN(entry) || double.IsNaN(slPrice) || double.IsNaN(tpPrice) ||
