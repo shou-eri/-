@@ -1395,14 +1395,15 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
             if (slipPips > MaxMarketRangePips)
             {
                 ClosePosition(res.Position);
-            if (Verbose) Print("[AUDIT] CANCEL by slippage {0:F1}p > {1}p", slipPips, MaxMarketRangePips);
-            return;   // または goto AfterEntry; 既存フローに合わせる
+                if (Verbose) Print("[AUDIT] CANCEL by slippage {0:F1}p > {1}p", slipPips, MaxMarketRangePips);
+                return;   // または goto AfterEntry; 既存フローに合わせる
             }
         }
-            {
-                _lastTrade  =Server.Time; _tradesToday++;
-            if (Verbose) Print("[AUDIT] ORDER {0} vol={1} SL={2}p TP={3}p", side,volL,slPips,tpPips);
-            }
+
+        // 成功時の処理
+        _lastTrade = Server.Time; 
+        _tradesToday++;
+        if (Verbose) Print("[AUDIT] ORDER {0} vol={1} SL={2}p TP={3}p", side, volL, slPips, tpPips);
         }
 
         private double CalcPositionUnits(double atr)
@@ -1633,15 +1634,14 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
         if (BlockAfterFridayFlat == Toggle.ON)
             _suspended = true;
     }
-}
 
         // === 可視化（スイング＆ZZブレイクの“見える化”）===
-private void DiagViz(int i1, bool trigBuy, bool trigSell)
-{
-    // 入力値
-    double close = Bars.ClosePrices[i1];
-    double atr   = _atrC; // 既に ComputePhysicsAndCache で更新済み
-    double spreadPips = Symbol.Spread / Symbol.PipSize;
+        private void DiagViz(int i1, bool trigBuy, bool trigSell)
+        {
+            // 入力値
+            double close = Bars.ClosePrices[i1];
+            double atr   = _atrC; // 既に ComputePhysicsAndCache で更新済み
+            double spreadPips = Symbol.Spread / Symbol.PipSize;
 
     // 直近スイングの取得：上昇脚 or 下降脚を優先的に採用
     int iH1=-1, iL1=-1; double H1=double.NaN, L1=double.NaN;
@@ -1683,6 +1683,6 @@ private void DiagViz(int i1, bool trigBuy, bool trigSell)
     if (trigSell)
         Chart.DrawIcon($"TRIG_SELL_{i1}", ChartIconType.DownArrow, Bars.OpenTimes[i1],
                        Bars.HighPrices[i1] * 1.002, Color.Red);
-}
+        }
     }
 }
