@@ -22,8 +22,7 @@ namespace cAlgo
         [Parameter("Units (fallback)", Group = "Trade", DefaultValue = 10000, MinValue = 1)]
         public int Units { get; set; }
 
-        [Parameter("Risk % (0=fixed Units)", Group = "Trade", DefaultValue = 1.0, MinValue = 0, MaxValue = 5)]
-        public double RiskPercent { get; set; }
+
 
         [Parameter("Cooldown (min)", Group = "Trade", DefaultValue = 0)]
         public int CooldownMin { get; set; }
@@ -46,7 +45,7 @@ namespace cAlgo
         [Parameter("TP R:R", Group = "Risk", DefaultValue = 1.5)]
         public double RMultiple { get; set; }
 
-        [Parameter("Max Spread (pips)", Group = "Risk", DefaultValue = 0.0, MinValue = 0.0)]
+        [Parameter("Max Spread (pips)", Group = "Risk", DefaultValue = 2.0, MinValue = 0.0)]
         public double MaxSpreadPips { get; set; }
 
         [Parameter("Max Market Range (pips)", Group = "Risk", DefaultValue = 0, MinValue = 0)]
@@ -283,8 +282,7 @@ namespace cAlgo
         [Parameter("Cooldown Bars", DefaultValue = 0, MinValue = 0)]
         public int CooldownBars { get; set; }
 
-        [Parameter("Max Spread (pips)", DefaultValue = 2.0, MinValue = 0.0)]
-        public double SpreadMaxPips { get; set; }
+
 
         [Parameter("Label", DefaultValue = "Sindan")] public string Label { get; set; }
         [Parameter("Timer Interval (ms)", DefaultValue = 250)]
@@ -402,7 +400,7 @@ namespace cAlgo
         private bool SpreadTooWide()
     {
         double spreadPips = (Symbol.Ask - Symbol.Bid) / Symbol.PipSize;
-        return (SpreadMaxPips > 0.0) && (spreadPips > SpreadMaxPips);
+        return (MaxSpreadPips > 0.0) && (spreadPips > MaxSpreadPips);
     }
         private void REJ(string code, string msg) => Print($"[REJ][{code}] {msg}");
 
@@ -471,7 +469,7 @@ private bool MicroConfirmShort() {
     int maxDaily = EffectiveMaxTradesPerDay();
     if (maxDaily > 0 && _tradesToday >= maxDaily) return false;
     if (HasOpen(label, side)) return false;
-    // SpreadTooWide() が SpreadMaxPips を見ているので二重条件は不要
+    // SpreadTooWide() が MaxSpreadPips を見ているので二重条件は不要
     if (SpreadTooWide()) return false;
     return true;
 }
@@ -797,8 +795,8 @@ else // trigSell
         { REJ("COOL", $"wait {CooldownBars - (curBar - lastTradeBar)} bars"); return; }
 
         // 1) スプレッド
-        if (SpreadMaxPips > 0 && spreadPips > SpreadMaxPips)
-        { REJ("SPREAD", $"{spreadPips:F2}p > {SpreadMaxPips:F2}p"); return; }
+        if (MaxSpreadPips > 0 && spreadPips > MaxSpreadPips)
+        { REJ("SPREAD", $"{spreadPips:F2}p > {MaxSpreadPips:F2}p"); return; }
 
         // 2) ストップ距離
         double stopPips = Math.Abs((slPrice - entry)) / Symbol.PipSize;
@@ -1412,7 +1410,7 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
         return Symbol.NormalizeVolumeInUnits(Units, RoundingMode.ToNearest);
 
     // Risk管理を使わない（=0 以下）時も固定Units
-    if (RiskPercent <= 0)
+    if (RiskPct <= 0)
         return Symbol.NormalizeVolumeInUnits(Units, RoundingMode.ToNearest);
 
     // --- ここからリスク％計算 ---
@@ -1422,7 +1420,7 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
     if (tickValue <= 0 || double.IsNaN(ticks) || double.IsInfinity(ticks))
         return Symbol.NormalizeVolumeInUnits(Units, RoundingMode.ToNearest);
 
-    double riskMoney = Account.Balance * (RiskPercent / 100.0);
+    double riskMoney = Account.Balance * (RiskPct / 100.0);
     double rawUnits  = riskMoney / Math.Max(1e-9, ticks * tickValue);
 
     // ステップ・最小/最大を厳守させる
