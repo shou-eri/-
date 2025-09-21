@@ -1,355 +1,603 @@
-using cAlgo.Indicators;
-using cAlgo.API.Indicators;
-using cAlgo.API.Internals;
-using cAlgo.API;
-using System.Threading;
-using System;   
+using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Text;
-
-using System.Collections.Generic;
+using System.Threading;
+using cAlgo.API;
+using cAlgo.API.Indicators;
+using cAlgo.API.Internals;
+using cAlgo.Indicators;
 
 namespace cAlgo
 {
+    /// <summary>
+    /// Simple toggle enumeration for boolean-like parameters
+    /// </summary>
     public enum Toggle { OFF, ON }
+
+    /// <summary>
+    /// Energy gate operation modes for market condition filtering
+    /// </summary>
+    public enum EnergyMode { Off, Block, Scale, Tighten }
+    /// <summary>
+    /// Advanced trading robot implementing physics-based market dynamics with zigzag patterns,
+    /// pullback entries, and sophisticated risk management.
+    /// 
+    /// Features:
+    /// - Physics-based price movement simulation with Kalman filtering
+    /// - ZigZag breakout and pullback entry strategies 
+    /// - Dynamic position sizing and trailing stops
+    /// - Energy-based market condition filtering
+    /// - Daily performance tilt adjustments
+    /// - Friday flat enforcement for weekend risk management
+    /// </summary>
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.None)]
     public class GalileoUltraPhysicsV5 : Robot
     {
-        // ===== Trade / Signal =====
+        #region === Trading Parameters ===
+        /// <summary>Trading label prefix for position identification</summary>
         [Parameter("Label Prefix", Group = "Trade", DefaultValue = "GAL_U4")]
         public string LabelPrefix { get; set; }
 
+        /// <summary>Fallback position size when risk percentage is disabled</summary>
         [Parameter("Units (fallback)", Group = "Trade", DefaultValue = 10000, MinValue = 1)]
         public int Units { get; set; }
 
+        /// <summary>Risk percentage of account balance per trade (0=use fixed Units)</summary>
         [Parameter("Risk % (0=fixed Units)", Group = "Trade", DefaultValue = 1.0, MinValue = 0, MaxValue = 5)]
         public double RiskPercent { get; set; }
 
+        /// <summary>Minimum time between trades in minutes</summary>
         [Parameter("Cooldown (min)", Group = "Trade", DefaultValue = 0)]
         public int CooldownMin { get; set; }
 
+        /// <summary>Maximum number of trades per trading day (0=unlimited)</summary>
         [Parameter("Max Trades / Day", Group = "Trade", DefaultValue = 0)]
         public int MaxTradesPerDay { get; set; }
 
-        [Parameter("Use Daily Tilt", Group="Trade", DefaultValue = true)]
+        /// <summary>Enable dynamic risk adjustment based on daily performance</summary>
+        [Parameter("Use Daily Tilt", Group = "Trade", DefaultValue = true)]
         public bool UseDailyTilt { get; set; }
+        
+        #endregion
 
+        #region === Signal & Market Analysis ===
+
+        /// <summary>Lookback period for high/low calculations</summary>
         [Parameter("Lookback", Group = "Signal", DefaultValue = 50, MinValue = 10)]
         public int Lookback { get; set; }
+        
+        #endregion
 
+        #region === Risk Management ===
+
+        /// <summary>ATR calculation period</summary>
         [Parameter("ATR Period", Group = "Risk", DefaultValue = 14)]
         public int AtrPeriod { get; set; }
 
+        /// <summary>ATR multiplier for stop loss calculation</summary>
         [Parameter("Trail k (ATR)", Group = "Risk", DefaultValue = 0.8)]
         public double TrailAtrK { get; set; }
 
+        /// <summary>Risk-reward ratio for take profit calculation</summary>
         [Parameter("TP R:R", Group = "Risk", DefaultValue = 1.5)]
         public double RMultiple { get; set; }
 
+        /// <summary>Maximum allowed spread in pips (0=no limit)</summary>
         [Parameter("Max Spread (pips)", Group = "Risk", DefaultValue = 0.0, MinValue = 0.0)]
         public double MaxSpreadPips { get; set; }
 
+        /// <summary>Maximum market range in pips for trade filtering</summary>
         [Parameter("Max Market Range (pips)", Group = "Risk", DefaultValue = 0, MinValue = 0)]
-        public int MaxMarketRangePips { get; set; } // 0 なら未指定
+        public int MaxMarketRangePips { get; set; }
 
-        [Parameter("Trail: Min dist from price (pips)", Group="Risk", DefaultValue = 0.5, MinValue = 0.0)]
+        /// <summary>Minimum distance between stop loss and current price in pips</summary>
+        [Parameter("Trail: Min dist from price (pips)", Group = "Risk", DefaultValue = 0.5, MinValue = 0.0)]
         public double MinSLFromPricePips { get; set; }
 
-        [Parameter("Trail mode: Chandelier", Group="Risk", DefaultValue = true)]
+        /// <summary>Use Chandelier exit method for trailing stops</summary>
+        [Parameter("Trail mode: Chandelier", Group = "Risk", DefaultValue = true)]
         public bool TrailChandelier { get; set; }
 
-        // 例: サーバ時刻の 00:00 を日次境界にする（UTC運用ならそのままでOK）
-        [Parameter("Daily reset hour (server time)", Group="Risk", DefaultValue = 0, MinValue = 0, MaxValue = 23)]
+        /// <summary>Hour for daily reset in server time (0-23)</summary>
+        [Parameter("Daily reset hour (server time)", Group = "Risk", DefaultValue = 0, MinValue = 0, MaxValue = 23)]
         public int DailyResetHour { get; set; }
 
-        // リセット時にロボが描いた線を掃除したい場合
-        [Parameter("Clear lines on daily reset", Group="Risk", DefaultValue = false)]
+        /// <summary>Clear chart lines when daily reset occurs</summary>
+        [Parameter("Clear lines on daily reset", Group = "Risk", DefaultValue = false)]
         public bool ClearLinesOnDailyReset { get; set; }
 
+        /// <summary>Force close all positions on Friday</summary>
         [Parameter("Force Flat on Friday", Group = "Risk", DefaultValue = Toggle.ON)]
         public Toggle ForceFlatFriday { get; set; }
 
+        /// <summary>Hour for Friday position closure (server time)</summary>
         [Parameter("Friday Flat Hour (server time)", Group = "Risk", DefaultValue = 21, MinValue = 0, MaxValue = 23)]
         public int FridayFlatHour { get; set; }
 
+        /// <summary>Minute for Friday position closure</summary>
         [Parameter("Friday Flat Minute", Group = "Risk", DefaultValue = 55, MinValue = 0, MaxValue = 59)]
         public int FridayFlatMinute { get; set; }
 
+        /// <summary>Block new trades after Friday flat</summary>
         [Parameter("Block After Friday Flat", Group = "Risk", DefaultValue = Toggle.ON)]
         public Toggle BlockAfterFridayFlat { get; set; }
 
+        /// <summary>Cancel pending orders after Friday flat</summary>
         [Parameter("Cancel Pending Orders", Group = "Risk", DefaultValue = Toggle.ON)]
         public Toggle CancelPendingAfterFlat { get; set; }
 
+        /// <summary>Risk percentage for position sizing</summary>
         [Parameter("Risk %", DefaultValue = 0.5, MinValue = 0, MaxValue = 10)]
         public double RiskPct { get; set; }
 
+        /// <summary>Minimum stop loss distance in pips</summary>
+        [Parameter("Min Stops (pips)", Group = "Risk", DefaultValue = 0, MinValue = 0)]
+        public int MinStopsPips { get; set; }
+        
+        #endregion
+
+        #region === Execution Settings ===
+
+        /// <summary>Random execution delay in milliseconds</summary>
         [Parameter("Jitter (ms)", Group = "Exec", DefaultValue = 700)]
         public int JitterMs { get; set; }
 
-        // ===== Parameters (Gates) =====
-        [Parameter("Use Energy Gate", Group = "Gates", DefaultValue = false)]
-        public bool UseEnergyGate { get; set; }
-
-        [Parameter("Energy Min (Etot)", Group = "Gates", DefaultValue = 0.00010)]
-        public double EnergyMin { get; set; }
-
-        [Parameter("Energy Max (Etot)", Group = "Gates", DefaultValue = 0.50)]
-        public double EnergyMax { get; set; }
-
-        [Parameter("Max |dE|", Group = "Gates", DefaultValue = 0.06)]
-        public double MaxAbsDE { get; set; }
-
-        // 追加: エネルギーゲートのモード
-        public enum EnergyMode { Off, Block, Scale, Tighten }
-        [Parameter("Energy Mode", DefaultValue = EnergyMode.Scale)] public EnergyMode EngMode { get; set; }
-        [Parameter("Energy ATR Period", DefaultValue = 14, MinValue = 5)] public int EngAtrPeriod { get; set; }
-        [Parameter("Quiet ≤ (x ATR)", DefaultValue = 0.20, MinValue = 0.0)] public double EngQuietX { get; set; }  // 低すぎ閾
-        [Parameter("Hot  ≥ (x ATR)", DefaultValue = 1.20, MinValue = 0.0)] public double EngHotX { get; set; }     // 高すぎ閾
-
-        // Scale/Tightenの強さ
-        [Parameter("Min Volume Scale", DefaultValue = 0.35, MinValue = 0.1, MaxValue = 1.0)] public double EngMinScale { get; set; }
-        [Parameter("Extra Break @Hot (pips)", DefaultValue = 2.0, MinValue = 0.0)] public double EngExtraBreakPips { get; set; }
-        [Parameter("Stop Pips Min (0=auto)", DefaultValue = 0.0, MinValue = 0.0)]
-        public double StopPipsMin { get; set; }
-
-        private AverageTrueRange _atrEng;
-
-        // ===== Physics =====
-        [Parameter("Mass m", Group = "Physics", DefaultValue = 1.0)]
-        public double Mass { get; set; }
-
-        [Parameter("Damping c", Group = "Physics", DefaultValue = 0.30)]
-        public double Damping { get; set; }
-
-        [Parameter("Spring k1 (Donchian)", Group = "Physics", DefaultValue = 0.60)]
-        public double SpringK1 { get; set; }
-
-        [Parameter("Spring k2 (EMA)", Group = "Physics", DefaultValue = 0.30)]
-        public double SpringK2 { get; set; }
-
-        [Parameter("EMA Period", Group = "Physics", DefaultValue = 200)]
-        public int EmaPeriod { get; set; }
-
-        [Parameter("Coulomb μ0", Group = "Friction", DefaultValue = 0.00002)]
-        public double FrictionMu0 { get; set; }
-
-        [Parameter("Stribeck μ1", Group = "Friction", DefaultValue = 0.00010)]
-        public double FrictionMu1 { get; set; }
-
-        [Parameter("Stribeck v* (abs)", Group = "Friction", DefaultValue = 0.00020)]
-        public double StribeckVStar { get; set; }
-
-        [Parameter("Drive Gain", Group = "Physics", DefaultValue = 1.0)]
-        public double DriveGain { get; set; }
-
-        [Parameter("Noise k (ATR→σ)", Group = "Physics", DefaultValue = 0.10)]
-        public double NoiseK { get; set; }
-
-        [Parameter("Min |v| for momentum", Group = "Physics", DefaultValue = 0.00005)]
-        public double MinMomentum { get; set; }
-
-        [Parameter("SubSteps (per bar)", Group = "Physics", DefaultValue = 1, MinValue = 1, MaxValue = 20)]
-        public int SubSteps { get; set; }
-
-        [Parameter("Use Pullback Entries", Group="Pullback", DefaultValue = true)]
-        public bool UsePullbackEntries { get; set; }
-
-        [Parameter("PB Fib Min", Group="Pullback", DefaultValue = 0.3)]
-        public double PbFibMin { get; set; }
-
-        [Parameter("PB Fib Max", Group="Pullback", DefaultValue = 0.7)]
-        public double PbFibMax { get; set; }
-
-        [Parameter("PB ATR Buffer X", Group="Pullback", DefaultValue = 0.25, MinValue = 0.0)]
-        public double PbAtrBufX { get; set; }
-
-        [Parameter("PB Swing Backstep", Group="Pullback", DefaultValue = 3, MinValue = 2, MaxValue = 10)]
-        public int PbBack { get; set; }
-
-        [Parameter("PB Lookback Bars", Group="Pullback", DefaultValue = 400, MinValue = 50)]
-        public int PbLook { get; set; }
-
-        [Parameter("PB Need EMA Slope", Group="Pullback", DefaultValue = true)]
-        public bool PbNeedEmaSlope { get; set; }
-
-        [Parameter("PB Min v", Group="Pullback", DefaultValue = 0.0)]
-        public double PbMinV { get; set; }   // 物理：最小速度（補助フィルタ）
-
-        [Parameter("PB Auto Width", Group="Pullback", DefaultValue = true)]
-        public bool PbAutoWidth { get; set; }
-
-        [Parameter("PB ATR Floor (pips)", Group="Pullback", DefaultValue = 6.0, MinValue = 0)]
-        public double PbAtrFloorPips { get; set; }
-
-        [Parameter("PB ATR Cap x", Group="Pullback", DefaultValue = 1.20, MinValue = 0.8, MaxValue = 3)]
-        public double PbAtrCapX { get; set; }
-
-        [Parameter("PB Micro-Confirm", Group="Pullback", DefaultValue = false)]
-        public bool PbMicroConfirm { get; set; }
-
-        [Parameter("PB Zone Tol (pips)",   Group="Pullback", DefaultValue = 2.0, MinValue=0)]
-        public double PbZoneTolPips { get; set; }
-
-        [Parameter("PB Confirm Lookback",  Group="Pullback", DefaultValue = 2, MinValue=1, MaxValue=5)]
-        public int PbConfirmLookback { get; set; }
-
-        [Parameter("PB Arm Bars",          Group="Pullback", DefaultValue = 10, MinValue=1, MaxValue=20)]
-        public int PbArmBars { get; set; }
-
-        [Parameter("PB Relax EMA Slope",   Group="Pullback", DefaultValue = true)]
-        public bool PbRelaxEmaSlope { get; set; }   // true=弱めに判定
-
-        [Parameter("PB Min vr (|v|/ATR)",  Group="Pullback", DefaultValue = 0.45, MinValue=0)]
-        public double PbMinVr { get; set; }         // 既存より緩く（0.60→0.45 推奨）
-
-        // ===== Kalman =====
-        [Parameter("Use Kalman", Group = "Kalman", DefaultValue = true)]
-        public bool UseKalman { get; set; }
-
-        [Parameter("Q base", Group = "Kalman", DefaultValue = 1e-6)]
-        public double KalmanQ { get; set; }
-
-        [Parameter("R base", Group = "Kalman", DefaultValue = 1e-6)]
-        public double KalmanR { get; set; }
-
-        // ===== Energy Gate =====
-        [Parameter("Min E (×ATR^2)", Group = "Energy", DefaultValue = 0.05)]
-        public double MinEnergyATR2 { get; set; }
-
-        [Parameter("Min dE per bar", Group = "Energy", DefaultValue = 0.0)]
-        public double MinDE { get; set; }
-
-        // ===== Gap Guard =====
-        [Parameter("Gap K (×ATR)", Group = "Gap", DefaultValue = 1.5)]
-        public double GapK { get; set; }
-
-        [Parameter("Gap Cooldown Bars", Group = "Gap", DefaultValue = 0, MinValue = 0)]
-        public int GapCooldownBars { get; set; }
-
-        // ==== ZigZag escape parameters ====
-        [Parameter("Use ZigZag Escape", Group = "Exit", DefaultValue = true)]
-        public bool UseZigZagEscape { get; set; }       
-
-        [Parameter("ZZ BackStep", Group = "Exit", DefaultValue = 3, MinValue = 1)]
-        public int ZzBackStep { get; set; }
-
-        [Parameter("ZZ Buffer ATR×", Group = "Exit", DefaultValue = 0.0)]
-        public double ZzBufferAtrX { get; set; }
-
-        // ピボットより少し外側に置くための余白（pips）
-        [Parameter("ZZ Buffer Pips", DefaultValue = 2)]
-        public int ZzBufferPips { get; set; }
-
-        // ===== ZigZag =====
-        [Parameter("ZZ Break Buffer (ATR×)", Group = "ZigZag", DefaultValue = 0.4)]
-        public double ZzBreakAtrX { get; set; }
-
-        [Parameter("ZZ Break Buffer (pips)", Group = "ZigZag", DefaultValue = 2.0)]
-        public double ZzBreakPips { get; set; }
-
-        [Parameter("Show ZigZag on Chart", Group="ZigZag", DefaultValue = true)]
-        public bool ShowZigZagOnChart { get; set; }
-
-        // Enable or disable using ZigZag breakouts as entry triggers. When false
-        // the robot will rely solely on pullback entries (if enabled) for new
-        // positions. ZigZagEscape remains active for exit/trailing even when
-        // break entries are disabled.
-        [Parameter("Use ZZ Break Entries", Group="ZigZag", DefaultValue = true)]
-        public bool UseZzBreakEntries { get; set; }
-
-        // ===== Timer/Exec =====
+        /// <summary>Enable timer-based computation</summary>
         [Parameter("Use Timer Compute", Group = "Exec", DefaultValue = true)]
         public bool UseTimerCompute { get; set; }
 
+        /// <summary>Calculation frequency in seconds</summary>
         [Parameter("Calc Every (sec)", Group = "Exec", DefaultValue = 300, MinValue = 1, MaxValue = 3600)]
         public int CalcEverySec { get; set; }
-      
-        [Parameter("Min Stops (pips)", Group = "Exec", DefaultValue = 0, MinValue = 0)]
-        public int MinStopsPips { get; set; }
 
+        /// <summary>Timer interval in milliseconds</summary>
+        [Parameter("Timer Interval (ms)", DefaultValue = 250)]
+        public int TimerIntervalMs { get; set; }
+        
+        #endregion
+
+        #region === Energy Gate Parameters ===
+
+        /// <summary>Enable energy-based market filtering</summary>
+        [Parameter("Use Energy Gate", Group = "Gates", DefaultValue = false)]
+        public bool UseEnergyGate { get; set; }
+
+        /// <summary>Minimum total energy threshold</summary>
+        [Parameter("Energy Min (Etot)", Group = "Gates", DefaultValue = 0.00010)]
+        public double EnergyMin { get; set; }
+
+        /// <summary>Maximum total energy threshold</summary>
+        [Parameter("Energy Max (Etot)", Group = "Gates", DefaultValue = 0.50)]
+        public double EnergyMax { get; set; }
+
+        /// <summary>Maximum absolute energy change threshold</summary>
+        [Parameter("Max |dE|", Group = "Gates", DefaultValue = 0.06)]
+        public double MaxAbsDE { get; set; }
+
+        /// <summary>Energy gate operation mode</summary>
+        [Parameter("Energy Mode", DefaultValue = EnergyMode.Scale)]
+        public EnergyMode EngMode { get; set; }
+
+        /// <summary>ATR period for energy calculations</summary>
+        [Parameter("Energy ATR Period", DefaultValue = 14, MinValue = 5)]
+        public int EngAtrPeriod { get; set; }
+
+        /// <summary>Quiet market threshold (x ATR)</summary>
+        [Parameter("Quiet ≤ (x ATR)", DefaultValue = 0.20, MinValue = 0.0)]
+        public double EngQuietX { get; set; }
+
+        /// <summary>Hot market threshold (x ATR)</summary>
+        [Parameter("Hot  ≥ (x ATR)", DefaultValue = 1.20, MinValue = 0.0)]
+        public double EngHotX { get; set; }
+
+        /// <summary>Minimum volume scale factor</summary>
+        [Parameter("Min Volume Scale", DefaultValue = 0.35, MinValue = 0.1, MaxValue = 1.0)]
+        public double EngMinScale { get; set; }
+
+        /// <summary>Extra break requirement in hot markets (pips)</summary>
+        [Parameter("Extra Break @Hot (pips)", DefaultValue = 2.0, MinValue = 0.0)]
+        public double EngExtraBreakPips { get; set; }
+
+        /// <summary>Minimum stop distance in pips (0=auto)</summary>
+        [Parameter("Stop Pips Min (0=auto)", DefaultValue = 0.0, MinValue = 0.0)]
+        public double StopPipsMin { get; set; }
+
+        /// <summary>Minimum energy threshold (x ATR^2)</summary>
+        [Parameter("Min E (×ATR^2)", Group = "Energy", DefaultValue = 0.05)]
+        public double MinEnergyATR2 { get; set; }
+
+        /// <summary>Minimum energy change per bar</summary>
+        [Parameter("Min dE per bar", Group = "Energy", DefaultValue = 0.0)]
+        public double MinDE { get; set; }
+        
+        #endregion
+
+        #region === Physics Engine Parameters ===
+        /// <summary>Mass parameter for physics simulation</summary>
+        [Parameter("Mass m", Group = "Physics", DefaultValue = 1.0)]
+        public double Mass { get; set; }
+
+        /// <summary>Damping coefficient for physics simulation</summary>
+        [Parameter("Damping c", Group = "Physics", DefaultValue = 0.30)]
+        public double Damping { get; set; }
+
+        /// <summary>Spring constant for Donchian channel</summary>
+        [Parameter("Spring k1 (Donchian)", Group = "Physics", DefaultValue = 0.60)]
+        public double SpringK1 { get; set; }
+
+        /// <summary>Spring constant for EMA</summary>
+        [Parameter("Spring k2 (EMA)", Group = "Physics", DefaultValue = 0.30)]
+        public double SpringK2 { get; set; }
+
+        /// <summary>Exponential moving average period</summary>
+        [Parameter("EMA Period", Group = "Physics", DefaultValue = 200)]
+        public int EmaPeriod { get; set; }
+
+        /// <summary>Coulomb friction coefficient</summary>
+        [Parameter("Coulomb μ0", Group = "Friction", DefaultValue = 0.00002)]
+        public double FrictionMu0 { get; set; }
+
+        /// <summary>Stribeck friction coefficient</summary>
+        [Parameter("Stribeck μ1", Group = "Friction", DefaultValue = 0.00010)]
+        public double FrictionMu1 { get; set; }
+
+        /// <summary>Stribeck velocity threshold</summary>
+        [Parameter("Stribeck v* (abs)", Group = "Friction", DefaultValue = 0.00020)]
+        public double StribeckVStar { get; set; }
+
+        /// <summary>Drive force gain</summary>
+        [Parameter("Drive Gain", Group = "Physics", DefaultValue = 1.0)]
+        public double DriveGain { get; set; }
+
+        /// <summary>Noise scaling factor (ATR to sigma)</summary>
+        [Parameter("Noise k (ATR→σ)", Group = "Physics", DefaultValue = 0.10)]
+        public double NoiseK { get; set; }
+
+        /// <summary>Minimum velocity for momentum detection</summary>
+        [Parameter("Min |v| for momentum", Group = "Physics", DefaultValue = 0.00005)]
+        public double MinMomentum { get; set; }
+
+        /// <summary>Number of sub-steps per bar for physics integration</summary>
+        [Parameter("SubSteps (per bar)", Group = "Physics", DefaultValue = 1, MinValue = 1, MaxValue = 20)]
+        public int SubSteps { get; set; }
+        
+        #endregion
+
+        
+        #region === Pullback Entry Parameters ===
+
+        /// <summary>Enable pullback entry strategy</summary>
+        [Parameter("Use Pullback Entries", Group = "Pullback", DefaultValue = true)]
+        public bool UsePullbackEntries { get; set; }
+
+        /// <summary>Minimum Fibonacci retracement level</summary>
+        [Parameter("PB Fib Min", Group = "Pullback", DefaultValue = 0.3)]
+        public double PbFibMin { get; set; }
+
+        /// <summary>Maximum Fibonacci retracement level</summary>
+        [Parameter("PB Fib Max", Group = "Pullback", DefaultValue = 0.7)]
+        public double PbFibMax { get; set; }
+
+        /// <summary>ATR buffer multiplier for pullback zones</summary>
+        [Parameter("PB ATR Buffer X", Group = "Pullback", DefaultValue = 0.25, MinValue = 0.0)]
+        public double PbAtrBufX { get; set; }
+
+        /// <summary>Swing detection backstep</summary>
+        [Parameter("PB Swing Backstep", Group = "Pullback", DefaultValue = 3, MinValue = 2, MaxValue = 10)]
+        public int PbBack { get; set; }
+
+        /// <summary>Lookback period for swing detection</summary>
+        [Parameter("PB Lookback Bars", Group = "Pullback", DefaultValue = 400, MinValue = 50)]
+        public int PbLook { get; set; }
+
+        /// <summary>Require EMA slope confirmation</summary>
+        [Parameter("PB Need EMA Slope", Group = "Pullback", DefaultValue = true)]
+        public bool PbNeedEmaSlope { get; set; }
+
+        /// <summary>Minimum velocity for pullback physics filter</summary>
+        [Parameter("PB Min v", Group = "Pullback", DefaultValue = 0.0)]
+        public double PbMinV { get; set; }
+
+        /// <summary>Auto-adjust Fibonacci zone width based on volatility</summary>
+        [Parameter("PB Auto Width", Group = "Pullback", DefaultValue = true)]
+        public bool PbAutoWidth { get; set; }
+
+        /// <summary>Minimum ATR floor in pips</summary>
+        [Parameter("PB ATR Floor (pips)", Group = "Pullback", DefaultValue = 6.0, MinValue = 0)]
+        public double PbAtrFloorPips { get; set; }
+
+        /// <summary>ATR cap multiplier</summary>
+        [Parameter("PB ATR Cap x", Group = "Pullback", DefaultValue = 1.20, MinValue = 0.8, MaxValue = 3)]
+        public double PbAtrCapX { get; set; }
+
+        /// <summary>Enable micro-confirmation for pullback entries</summary>
+        [Parameter("PB Micro-Confirm", Group = "Pullback", DefaultValue = false)]
+        public bool PbMicroConfirm { get; set; }
+
+        /// <summary>Zone tolerance in pips</summary>
+        [Parameter("PB Zone Tol (pips)", Group = "Pullback", DefaultValue = 2.0, MinValue = 0)]
+        public double PbZoneTolPips { get; set; }
+
+        /// <summary>Confirmation lookback period</summary>
+        [Parameter("PB Confirm Lookback", Group = "Pullback", DefaultValue = 2, MinValue = 1, MaxValue = 5)]
+        public int PbConfirmLookback { get; set; }
+
+        /// <summary>Armed bars duration</summary>
+        [Parameter("PB Arm Bars", Group = "Pullback", DefaultValue = 10, MinValue = 1, MaxValue = 20)]
+        public int PbArmBars { get; set; }
+
+        /// <summary>Relax EMA slope requirement</summary>
+        [Parameter("PB Relax EMA Slope", Group = "Pullback", DefaultValue = true)]
+        public bool PbRelaxEmaSlope { get; set; }
+
+        /// <summary>Minimum velocity ratio (|v|/ATR)</summary>
+        [Parameter("PB Min vr (|v|/ATR)", Group = "Pullback", DefaultValue = 0.45, MinValue = 0)]
+        public double PbMinVr { get; set; }
+
+        #endregion
+
+        #region === Kalman Filter Parameters ===
+
+        /// <summary>Enable Kalman filtering</summary>
+        [Parameter("Use Kalman", Group = "Kalman", DefaultValue = true)]
+        public bool UseKalman { get; set; }
+
+        /// <summary>Process noise covariance base</summary>
+        [Parameter("Q base", Group = "Kalman", DefaultValue = 1e-6)]
+        public double KalmanQ { get; set; }
+
+        /// <summary>Measurement noise covariance base</summary>
+        [Parameter("R base", Group = "Kalman", DefaultValue = 1e-6)]
+        public double KalmanR { get; set; }
+
+        #endregion
+
+        #region === Gap Protection ===
+
+        /// <summary>Gap detection multiplier (x ATR)</summary>
+        [Parameter("Gap K (×ATR)", Group = "Gap", DefaultValue = 1.5)]
+        public double GapK { get; set; }
+
+        /// <summary>Cooldown period after gap detection</summary>
+        [Parameter("Gap Cooldown Bars", Group = "Gap", DefaultValue = 0, MinValue = 0)]
+        public int GapCooldownBars { get; set; }
+
+        #endregion
+
+        #region === ZigZag & Exit Strategy ===
+
+        /// <summary>Enable ZigZag-based exit management</summary>
+        [Parameter("Use ZigZag Escape", Group = "Exit", DefaultValue = true)]
+        public bool UseZigZagEscape { get; set; }
+
+        /// <summary>ZigZag pivot detection backstep</summary>
+        [Parameter("ZZ BackStep", Group = "Exit", DefaultValue = 3, MinValue = 1)]
+        public int ZzBackStep { get; set; }
+
+        /// <summary>ZigZag buffer as ATR multiplier</summary>
+        [Parameter("ZZ Buffer ATR×", Group = "Exit", DefaultValue = 0.0)]
+        public double ZzBufferAtrX { get; set; }
+
+        /// <summary>ZigZag buffer in pips for pivot placement</summary>
+        [Parameter("ZZ Buffer Pips", DefaultValue = 2)]
+        public int ZzBufferPips { get; set; }
+
+        /// <summary>ZigZag break detection buffer (ATR multiplier)</summary>
+        [Parameter("ZZ Break Buffer (ATR×)", Group = "ZigZag", DefaultValue = 0.4)]
+        public double ZzBreakAtrX { get; set; }
+
+        /// <summary>ZigZag break detection buffer in pips</summary>
+        [Parameter("ZZ Break Buffer (pips)", Group = "ZigZag", DefaultValue = 2.0)]
+        public double ZzBreakPips { get; set; }
+
+        /// <summary>Display ZigZag lines on chart</summary>
+        [Parameter("Show ZigZag on Chart", Group = "ZigZag", DefaultValue = true)]
+        public bool ShowZigZagOnChart { get; set; }
+
+        /// <summary>Enable ZigZag breakout entries</summary>
+        [Parameter("Use ZZ Break Entries", Group = "ZigZag", DefaultValue = true)]
+        public bool UseZzBreakEntries { get; set; }
+
+        #endregion
+
+        #region === Trailing Stop Parameters ===
+
+        /// <summary>ATR multiplier for trailing stops</summary>
+        [Parameter("Trail ATR x", Group = "Trail", DefaultValue = 1.5)]
+        public double TrailAtrMult { get; set; }
+
+        /// <summary>Minimum trailing step size in pips</summary>
+        [Parameter("Min trail step (pips)", Group = "Trail", DefaultValue = 1.0)]
+        public double MinTrailStepPips { get; set; }
+
+        #endregion
+
+        #region === Debug & Diagnostic Parameters ===
+
+        /// <summary>Enable verbose audit logging</summary>
         [Parameter("Verbose Audit", Group = "Debug", DefaultValue = true)]
         public bool Verbose { get; set; }
 
+        /// <summary>Audit logging frequency (every N bars)</summary>
         [Parameter("Audit Every N Bars", Group = "Debug", DefaultValue = 1, MinValue = 1, MaxValue = 50)]
         public int AuditEveryN { get; set; }
 
+        /// <summary>Enable debug visualization</summary>
         [Parameter("Debug Viz", Group = "Debug", DefaultValue = true)]
         public bool DebugViz { get; set; }
 
+        /// <summary>Draw robot analysis lines on chart</summary>
         [Parameter("Draw Robot Lines", Group = "Debug", DefaultValue = false)]
         public bool DrawRobotLines { get; set; }
 
+        /// <summary>Cooldown period in bars between trades</summary>
         [Parameter("Cooldown Bars", DefaultValue = 0, MinValue = 0)]
         public int CooldownBars { get; set; }
 
+        /// <summary>Maximum spread in pips for trade filtering</summary>
         [Parameter("Max Spread (pips)", DefaultValue = 2.0, MinValue = 0.0)]
         public double SpreadMaxPips { get; set; }
 
-        [Parameter("Label", DefaultValue = "Sindan")] public string Label { get; set; }
-        [Parameter("Timer Interval (ms)", DefaultValue = 250)]
-        public int TimerIntervalMs { get; set; }
+        /// <summary>Trading label for identification</summary>
+        [Parameter("Label", DefaultValue = "Sindan")]
+        public string Label { get; set; }
 
-        // ===== Trail =====
-        [Parameter("Trail ATR x", Group="Trail", DefaultValue = 1.5)]
-        public double TrailAtrMult { get; set; }
+        #endregion
 
-        [Parameter("Min trail step (pips)", Group="Trail", DefaultValue = 1.0)]
-        public double MinTrailStepPips { get; set; }
+        #region === Technical Indicators & State Variables ===
 
-        // ===== State =====
+        /// <summary>Average True Range indicator</summary>
         private AverageTrueRange _atr;
-        private ExponentialMovingAverage _ema;        private DateTime _lastTrade = DateTime.MinValue;
+        
+        /// <summary>Exponential Moving Average indicator</summary>
+        private ExponentialMovingAverage _ema;
+        
+        /// <summary>Energy ATR indicator</summary>
+        private AverageTrueRange _atrEng;
+
+        #endregion
+
+        #region === Trading State Variables ===
+
+        /// <summary>Last trade execution time</summary>
+        private DateTime _lastTrade = DateTime.MinValue;
+        
+        /// <summary>Current trading day</summary>
         private DateTime _day = DateTime.MinValue;
-        private volatile bool  _timerBusy = false;
+        
+        /// <summary>Timer busy flag to prevent overlapping executions</summary>
+        private volatile bool _timerBusy = false;
+        
+        /// <summary>Last timer execution timestamp</summary>
         private DateTime _lastTimerTs = DateTime.MinValue;
 
+        /// <summary>Number of trades executed today</summary>
         private int _tradesToday;
-        private int _gapCooldown;
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        // ===== Helpers =====
-        private static bool IsFinite(double x) => !(double.IsNaN(x) || double.IsInfinity(x));
-        private static double Sqr(double x) => x * x;
+        
+        /// <summary>Gap detection cooldown counter</summary>
+        
+        #endregion
 
-        // physical state
-        private double _x, _v, _a;
+        #region === Physics State Variables ===
+
+        /// <summary>Position in physics simulation</summary>
+        private double _x;
+        
+        /// <summary>Velocity in physics simulation</summary> 
+        private double _v;
+        
+        /// <summary>Acceleration in physics simulation</summary>
+        private double _a;
+
+        /// <summary>Previous energy value for change calculation</summary>
         private double _Eprev;
 
-        // Energy (Etot) と その増分（dE）
+        /// <summary>Total energy (Etot) for market analysis</summary>
         private double Etot = 0.0;
-        private double dE   = 0.0;
+        
+        /// <summary>Energy change (dE) for market analysis</summary>
+        private double dE = 0.0;
 
+        #endregion
+
+        #region === Analysis State Variables ===
+
+        /// <summary>Last bar index for which physics were computed</summary>
         private int lastTradeBar = int.MinValue / 2;
-        // --- Pullback arming state ---
-        private int _armLongBar = -9999;
-        private int _armShortBar = -9999;
-        private double _armLongSL = double.NaN;
-        private double _armShortSL = double.NaN;
 
-        // fields
+        /// <summary>ZigZag analysis reasoning for buy signals</summary>
         private string _zzWhyB = "";
+        
+        /// <summary>ZigZag analysis reasoning for sell signals</summary>
         private string _zzWhyS = "";
-        // Kalman covariance
-        private double _P00, _P01, _P10, _P11;
 
-        private readonly Random _rng = new Random();
-
-        // cache
+        /// <summary>Physics computation readiness flag</summary>
         private bool _physicsReady;
+        
+        /// <summary>Last computed bar index</summary>
         private int _lastComputedBar = -1;
+        
+        /// <summary>Cached high/low/mid/EMA/ATR values</summary>
         private double _hhC, _llC, _midC, _emaC, _atrC, _bandDiffC;
 
-        private string _label;
-        private bool _suspended =false;
-        private DateTime _lastFridayFlat = DateTime.MinValue;   // 同じ金曜で多重実行しないため
+        #endregion
+
+        #region === Kalman Filter State ===
+
+        /// <summary>Kalman filter covariance matrix elements</summary>
+        private double _P00, _P01, _P10, _P11;
+
+        #endregion
+
+        #region === Pullback State Variables ===
+
+        /// <summary>Bar index when long pullback was armed</summary>
+        private int _armLongBar = -9999;
         
-        // When a pullback entry is triggered it may compute an explicit stop
-        // price based on the swing structure. Store that here so that
-        // PlaceTrade can override the default ATR-based stop. NaN means no
-        // override is pending.
+        /// <summary>Bar index when short pullback was armed</summary>
+        private int _armShortBar = -9999;
+        
+        /// <summary>Stop loss for armed long pullback</summary>
+        private double _armLongSL = double.NaN;
+        
+        /// <summary>Stop loss for armed short pullback</summary>
+        private double _armShortSL = double.NaN;
+
+        #endregion
+
+        #region === Trade Management State ===
+
+        /// <summary>Trading label for position identification</summary>
+        private string _label;
+        
+        /// <summary>Trading suspension flag (e.g., after Friday flat)</summary>
+        private bool _suspended = false;
+        
+        /// <summary>Last Friday flat execution date</summary>
+        private DateTime _lastFridayFlat = DateTime.MinValue;
+
+        /// <summary>Initial stop loss override for specific trade setups</summary>
         private double _initialSLOverride = double.NaN;
-        // TP倍率の一時上書き（NaN=未指定）
+        
+        /// <summary>Risk multiple override for specific trade setups</summary>
         private double _rMultipleOverride = double.NaN;
+
+        #endregion
+
+        #region === Utility Variables ===
+
+        /// <summary>Random number generator for noise simulation</summary>
+        private readonly Random _rng = new Random();
+
+        #endregion
+
+        #region === Core Helper Methods ===
+
+        /// <summary>Checks if a number is finite (not NaN or infinite)</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsFinite(double x) => !(double.IsNaN(x) || double.IsInfinity(x));
+
+        /// <summary>Squares a number</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double Sqr(double x) => x * x;
+
+        /// <summary>Rounds price down to nearest tick</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private double ToTickDown(double price) 
+            => Math.Floor(price / Symbol.TickSize) * Symbol.TickSize;
+
+        /// <summary>Rounds price up to nearest tick</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private double ToTickUp(double price) 
+            => Math.Ceiling(price / Symbol.TickSize) * Symbol.TickSize;
+
+        /// <summary>Calculates logical trading day based on reset hour</summary>
+        private DateTime LogicalDay(DateTime t) => t.AddHours(-DailyResetHour).Date;
+
+        #endregion
+
+        #region === Daily Management Methods ===
 
         private double ToTickDown(double price)
          => Math.Floor(price / Symbol.TickSize)  * Symbol.TickSize; // 価格を下方向へ
