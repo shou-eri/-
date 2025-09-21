@@ -766,15 +766,66 @@ _rMultipleOverride = rAdj;
 if (_tradesToday >= maxT) { if (Verbose) Print("[BLOCK] daily max"); return; }
 
 // 5) ゲート＆発注（立った側だけ）
+int currentBar = Bars.Count - 1;
 if (trigBuy)
 {
     if (DumpEntryGates(_label, TradeType.Buy, _atrC) && CanEnter(_label, TradeType.Buy))
-        PlaceTrade(TradeType.Buy, slCandidate);
+    {
+        // Calculate volume scale from energy gate if enabled
+        double volScale = 1.0;
+        if (UseEnergyGate)
+        {
+            var energyResult = CheckEnergy(currentBar, Etot);
+            if (energyResult.block)
+            {
+                if (Verbose) Print($"[REJ][ENERGY][BUY] {energyResult.why}");
+                return;
+            }
+            volScale = energyResult.volScale;
+        }
+        
+        // Use main entry mechanism with fallback SL calculation if needed
+        double stopLoss = slCandidate;
+        if (double.IsNaN(stopLoss))
+        {
+            // Fallback: use ATR-based stop loss calculation (same as PlaceTrade was using)
+            double entry = Symbol.Ask; // Buy side entry price
+            double kSL = Math.Max(0.3, TrailAtrK);
+            stopLoss = entry - kSL * _atrC;
+        }
+        
+        TryEnter(TradeType.Buy, currentBar, stopLoss, volScale);
+    }
 }
 else // trigSell
 {
     if (DumpEntryGates(_label, TradeType.Sell, _atrC) && CanEnter(_label, TradeType.Sell))
-        PlaceTrade(TradeType.Sell, slCandidate);
+    {
+        // Calculate volume scale from energy gate if enabled
+        double volScale = 1.0;
+        if (UseEnergyGate)
+        {
+            var energyResult = CheckEnergy(currentBar, Etot);
+            if (energyResult.block)
+            {
+                if (Verbose) Print($"[REJ][ENERGY][SELL] {energyResult.why}");
+                return;
+            }
+            volScale = energyResult.volScale;
+        }
+        
+        // Use main entry mechanism with fallback SL calculation if needed
+        double stopLoss = slCandidate;
+        if (double.IsNaN(stopLoss))
+        {
+            // Fallback: use ATR-based stop loss calculation (same as PlaceTrade was using)
+            double entry = Symbol.Bid; // Sell side entry price
+            double kSL = Math.Max(0.3, TrailAtrK);
+            stopLoss = entry + kSL * _atrC;
+        }
+        
+        TryEnter(TradeType.Sell, currentBar, stopLoss, volScale);
+    }
 }
 
         // === AFTER entries/triggers, manage exits & trailing ===
