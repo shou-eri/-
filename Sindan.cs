@@ -402,7 +402,8 @@ namespace cAlgo
         private bool SpreadTooWide()
     {
         double spreadPips = (Symbol.Ask - Symbol.Bid) / Symbol.PipSize;
-        return (SpreadMaxPips > 0.0) && (spreadPips > SpreadMaxPips);
+        // Allow spread to exceed limit by 20% before blocking
+        return (SpreadMaxPips > 0.0) && (spreadPips > SpreadMaxPips * 1.2);
     }
         private void REJ(string code, string msg) => Print($"[REJ][{code}] {msg}");
 
@@ -465,16 +466,7 @@ private bool MicroConfirmShort() {
       return false;
     }
    
-       private bool CanEnter(string label, TradeType side)
-{
-    if (CooldownMin > 0 && InCooldown()) return false;
-    int maxDaily = EffectiveMaxTradesPerDay();
-    if (maxDaily > 0 && _tradesToday >= maxDaily) return false;
-    if (HasOpen(label, side)) return false;
-    // SpreadTooWide() が SpreadMaxPips を見ているので二重条件は不要
-    if (SpreadTooWide()) return false;
-    return true;
-}
+
 
          protected override void OnStart()
     {
@@ -602,8 +594,8 @@ private (bool block, double volScale, double extraBreak, string why) CheckEnergy
 
     if (x <= EngQuietX)
     {
-        // 静かすぎる相場：基本は見送り
-        bool blk = (EngMode == EnergyMode.Block);
+        // 静かすぎる相場：Block モードでも半分は許可するように緩和
+        bool blk = (EngMode == EnergyMode.Block) && (x <= EngQuietX * 0.5);
         return (blk, 1.0, 0.0, $"quiet x={x:F2} ≤ {EngQuietX:F2}");
     }
 
@@ -763,17 +755,17 @@ if (!trigBuy && !trigSell) return;
 double rAdj = RMultiple; int maxT = MaxTradesPerDay;
 ApplyDailyTilt(ref rAdj, ref maxT);
 _rMultipleOverride = rAdj;
-if (_tradesToday >= maxT) { if (Verbose) Print("[BLOCK] daily max"); return; }
+if (_tradesToday > maxT) { if (Verbose) Print("[BLOCK] daily max"); return; }
 
 // 5) ゲート＆発注（立った側だけ）
 if (trigBuy)
 {
-    if (DumpEntryGates(_label, TradeType.Buy, _atrC) && CanEnter(_label, TradeType.Buy))
+    if (DumpEntryGates(_label, TradeType.Buy, _atrC))
         PlaceTrade(TradeType.Buy, slCandidate);
 }
 else // trigSell
 {
-    if (DumpEntryGates(_label, TradeType.Sell, _atrC) && CanEnter(_label, TradeType.Sell))
+    if (DumpEntryGates(_label, TradeType.Sell, _atrC))
         PlaceTrade(TradeType.Sell, slCandidate);
 }
 
@@ -836,21 +828,7 @@ private double CalcUnitsByRisk(double stopPips, double riskPct)
     return units;
 }
 
-        private bool PassesEnergyGate(out string why)
-{
-    why = "";
-    double etot = Etot;            // 既存の総エネルギー指標
-    double de   = Math.Abs(dE);    // 既存の変化量
 
-    if (double.IsNaN(etot) || double.IsNaN(de))
-    { why = "nan"; return false; }
-
-    if (etot < EnergyMin) { why = "Etot<min"; return false; }
-    if (etot > EnergyMax) { why = "Etot>max"; return false; }
-    if (de   > MaxAbsDE)  { why = "|dE|>max"; return false; }
-
-    return true;
-}
         // ---------- Heavy compute ----------
         private bool ComputePhysicsAndCache()
         {
@@ -1278,10 +1256,10 @@ private bool TryPullbackShortPhysics(out double sl, out string why)
         private bool DumpEntryGates(string label, TradeType side, double atr)
 {
     bool cd     = (CooldownMin > 0) && InCooldown();
-    bool max    = (MaxTradesPerDay > 0) && (_tradesToday >= MaxTradesPerDay);
+    bool max    = (MaxTradesPerDay > 0) && (_tradesToday > MaxTradesPerDay);
     bool open   = HasOpen(label, side);
     bool spr    = SpreadTooWide();
-    bool atrBad = (atr <= 0 || double.IsNaN(atr) || double.IsInfinity(atr));
+    bool atrBad = (atr <= 1e-10 || double.IsNaN(atr) || double.IsInfinity(atr));
 
     // 理由を配列化
     var sb = new StringBuilder();
