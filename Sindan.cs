@@ -2,7 +2,6 @@ using cAlgo.Indicators;
 using cAlgo.API.Indicators;
 using cAlgo.API.Internals;
 using cAlgo.API;
-using System.Threading;
 using System;   
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -22,11 +21,8 @@ namespace cAlgo
         [Parameter("Units (fallback)", Group = "Trade", DefaultValue = 10000, MinValue = 1)]
         public int Units { get; set; }
 
-        [Parameter("Risk % (0=fixed Units)", Group = "Trade", DefaultValue = 1.0, MinValue = 0, MaxValue = 5)]
-        public double RiskPercent { get; set; }
-
-        [Parameter("Cooldown (min)", Group = "Trade", DefaultValue = 0)]
-        public int CooldownMin { get; set; }
+        [Parameter("Cooldown Bars", DefaultValue = 0, MinValue = 0)]
+        public int CooldownBars { get; set; }
 
         [Parameter("Max Trades / Day", Group = "Trade", DefaultValue = 0)]
         public int MaxTradesPerDay { get; set; }
@@ -45,9 +41,6 @@ namespace cAlgo
 
         [Parameter("TP R:R", Group = "Risk", DefaultValue = 1.5)]
         public double RMultiple { get; set; }
-
-        [Parameter("Max Spread (pips)", Group = "Risk", DefaultValue = 0.0, MinValue = 0.0)]
-        public double MaxSpreadPips { get; set; }
 
         [Parameter("Max Market Range (pips)", Group = "Risk", DefaultValue = 0, MinValue = 0)]
         public int MaxMarketRangePips { get; set; } // 0 なら未指定
@@ -280,13 +273,8 @@ namespace cAlgo
         [Parameter("Draw Robot Lines", Group = "Debug", DefaultValue = false)]
         public bool DrawRobotLines { get; set; }
 
-        [Parameter("Cooldown Bars", DefaultValue = 0, MinValue = 0)]
-        public int CooldownBars { get; set; }
-
         [Parameter("Max Spread (pips)", DefaultValue = 2.0, MinValue = 0.0)]
         public double SpreadMaxPips { get; set; }
-
-        [Parameter("Label", DefaultValue = "Sindan")] public string Label { get; set; }
         [Parameter("Timer Interval (ms)", DefaultValue = 250)]
         public int TimerIntervalMs { get; set; }
 
@@ -299,7 +287,7 @@ namespace cAlgo
 
         // ===== State =====
         private AverageTrueRange _atr;
-        private ExponentialMovingAverage _ema;        private DateTime _lastTrade = DateTime.MinValue;
+        private ExponentialMovingAverage _ema;
         private DateTime _day = DateTime.MinValue;
         private volatile bool  _timerBusy = false;
         private DateTime _lastTimerTs = DateTime.MinValue;
@@ -467,7 +455,7 @@ private bool MicroConfirmShort() {
    
        private bool CanEnter(string label, TradeType side)
 {
-    if (CooldownMin > 0 && InCooldown()) return false;
+    if (InCooldown()) return false;
     int maxDaily = EffectiveMaxTradesPerDay();
     if (maxDaily > 0 && _tradesToday >= maxDaily) return false;
     if (HasOpen(label, side)) return false;
@@ -499,7 +487,6 @@ private bool MicroConfirmShort() {
             _lastComputedBar = -1;
 
             // Initialize trade counters
-            _lastTrade = DateTime.MinValue;
             _tradesToday = 0;
          ClearRobotLines();   // 起動時に残骸を消す
          if (UseTimerCompute)
@@ -1277,7 +1264,7 @@ private bool TryPullbackShortPhysics(out double sl, out string why)
         // どこか共通の場所に追加
         private bool DumpEntryGates(string label, TradeType side, double atr)
 {
-    bool cd     = (CooldownMin > 0) && InCooldown();
+    bool cd     = InCooldown();
     bool max    = (MaxTradesPerDay > 0) && (_tradesToday >= MaxTradesPerDay);
     bool open   = HasOpen(label, side);
     bool spr    = SpreadTooWide();
@@ -1400,7 +1387,7 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
             }
         }
             {
-                _lastTrade  =Server.Time; _tradesToday++;
+                _tradesToday++;
             if (Verbose) Print("[AUDIT] ORDER {0} vol={1} SL={2}p TP={3}p", side,volL,slPips,tpPips);
             }
         }
@@ -1412,7 +1399,7 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
         return Symbol.NormalizeVolumeInUnits(Units, RoundingMode.ToNearest);
 
     // Risk管理を使わない（=0 以下）時も固定Units
-    if (RiskPercent <= 0)
+    if (RiskPct <= 0)
         return Symbol.NormalizeVolumeInUnits(Units, RoundingMode.ToNearest);
 
     // --- ここからリスク％計算 ---
@@ -1422,7 +1409,7 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
     if (tickValue <= 0 || double.IsNaN(ticks) || double.IsInfinity(ticks))
         return Symbol.NormalizeVolumeInUnits(Units, RoundingMode.ToNearest);
 
-    double riskMoney = Account.Balance * (RiskPercent / 100.0);
+    double riskMoney = Account.Balance * (RiskPct / 100.0);
     double rawUnits  = riskMoney / Math.Max(1e-9, ticks * tickValue);
 
     // ステップ・最小/最大を厳守させる
@@ -1568,8 +1555,9 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
 
         private bool InCooldown()
         {
-            if (_lastTrade == DateTime.MinValue) return false;
-            return Server.Time < _lastTrade.AddMinutes(CooldownMin);
+            if (CooldownBars <= 0) return false;
+            int curBar = Bars.Count - 1;
+            return curBar - lastTradeBar < CooldownBars;
         }
 
         private static double Highest(DataSeries s, int n)
