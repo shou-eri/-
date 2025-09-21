@@ -1633,56 +1633,54 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
         if (BlockAfterFridayFlat == Toggle.ON)
             _suspended = true;
     }
-}
-
         // === 可視化（スイング＆ZZブレイクの“見える化”）===
-private void DiagViz(int i1, bool trigBuy, bool trigSell)
-{
-    // 入力値
-    double close = Bars.ClosePrices[i1];
-    double atr   = _atrC; // 既に ComputePhysicsAndCache で更新済み
-    double spreadPips = Symbol.Spread / Symbol.PipSize;
+        private void DiagViz(int i1, bool trigBuy, bool trigSell)
+        {
+            // 入力値
+            double close = Bars.ClosePrices[i1];
+            double atr   = _atrC; // 既に ComputePhysicsAndCache で更新済み
+            double spreadPips = Symbol.Spread / Symbol.PipSize;
 
-    // 直近スイングの取得：上昇脚 or 下降脚を優先的に採用
-    int iH1=-1, iL1=-1; double H1=double.NaN, L1=double.NaN;
-    bool hasLegUp   = TryGetLastLegUp(out iL1, out L1, out iH1, out H1);
-    bool hasLegDown = (!hasLegUp) && TryGetLastLegDown(out iH1, out H1, out iL1, out L1);
-    if (!(hasLegUp || hasLegDown)) return;
+            // 直近スイングの取得：上昇脚 or 下降脚を優先的に採用
+            int iH1=-1, iL1=-1; double H1=double.NaN, L1=double.NaN;
+            bool hasLegUp   = TryGetLastLegUp(out iL1, out L1, out iH1, out H1);
+            bool hasLegDown = (!hasLegUp) && TryGetLastLegDown(out iH1, out H1, out iL1, out L1);
+            if (!(hasLegUp || hasLegDown)) return;
 
-    // ブレイクの最小幅（ATR× or pips の大きい方）
-    double minBreak = Math.Max(ZzBreakPips * Symbol.PipSize, ZzBreakAtrX * atr);
-    double breakUp  = double.IsNaN(H1) ? double.NaN : (H1 + minBreak);
-    double breakDn  = double.IsNaN(L1) ? double.NaN : (L1 - minBreak);
+            // ブレイクの最小幅（ATR× or pips の大きい方）
+            double minBreak = Math.Max(ZzBreakPips * Symbol.PipSize, ZzBreakAtrX * atr);
+            double breakUp  = double.IsNaN(H1) ? double.NaN : (H1 + minBreak);
+            double breakDn  = double.IsNaN(L1) ? double.NaN : (L1 - minBreak);
 
-    // しきい値到達の“素朴判定”
-    bool canBuy  = !double.IsNaN(breakUp) && close > breakUp;
-    bool canSell = !double.IsNaN(breakDn) && close < breakDn;
+            // しきい値到達の“素朴判定”
+            bool canBuy  = !double.IsNaN(breakUp) && close > breakUp;
+            bool canSell = !double.IsNaN(breakDn) && close < breakDn;
 
-    // ---- ログ（このバーで何が足りないかを1行で）----
-    Print($"[DIAG] bar={i1} close={close:F5} ATR={atr:F5} spr={spreadPips:F2} "
-        + $"H1={H1:F5} L1={L1:F5} brkUp={breakUp:F5} brkDn={breakDn:F5} "
-        + $"canBuy={canBuy} canSell={canSell} trigBuy={trigBuy} trigSell={trigSell}");
+            // ---- ログ（このバーで何が足りないかを1行で）----
+            Print($"[DIAG] bar={i1} close={close:F5} ATR={atr:F5} spr={spreadPips:F2} "
+                + $"H1={H1:F5} L1={L1:F5} brkUp={breakUp:F5} brkDn={breakDn:F5} "
+                + $"canBuy={canBuy} canSell={canSell} trigBuy={trigBuy} trigSell={trigSell}");
 
-    // ---- チャート描画（水平線 & 矢印）----
-    // スイング
-    if (!double.IsNaN(H1))
-        Chart.DrawHorizontalLine($"zz_H1_{i1}", H1, Color.SteelBlue, 1, LineStyle.Dots);
-    if (!double.IsNaN(L1))
-        Chart.DrawHorizontalLine($"zz_L1_{i1}", L1, Color.IndianRed, 1, LineStyle.Dots);
+            // ---- チャート描画（水平線 & 矢印）----
+            // スイング
+            if (!double.IsNaN(H1))
+                Chart.DrawHorizontalLine($"zz_H1_{i1}", H1, Color.SteelBlue, 1, LineStyle.Dots);
+            if (!double.IsNaN(L1))
+                Chart.DrawHorizontalLine($"zz_L1_{i1}", L1, Color.IndianRed, 1, LineStyle.Dots);
 
-    // ブレイクしきい値
-    if (!double.IsNaN(breakUp))
-        Chart.DrawHorizontalLine($"zz_BU_{i1}", breakUp, Color.LimeGreen, 1, LineStyle.Solid);
-    if (!double.IsNaN(breakDn))
-        Chart.DrawHorizontalLine($"zz_BD_{i1}", breakDn, Color.OrangeRed, 1, LineStyle.Solid);
+            // ブレイクしきい値
+            if (!double.IsNaN(breakUp))
+                Chart.DrawHorizontalLine($"zz_BU_{i1}", breakUp, Color.LimeGreen, 1, LineStyle.Solid);
+            if (!double.IsNaN(breakDn))
+                Chart.DrawHorizontalLine($"zz_BD_{i1}", breakDn, Color.OrangeRed, 1, LineStyle.Solid);
 
-    // トリガー表示（立った側に矢印）
-    if (trigBuy)
-        Chart.DrawIcon($"TRIG_BUY_{i1}", ChartIconType.UpArrow, Bars.OpenTimes[i1],
-                       Bars.LowPrices[i1] * 0.998, Color.Lime);
-    if (trigSell)
-        Chart.DrawIcon($"TRIG_SELL_{i1}", ChartIconType.DownArrow, Bars.OpenTimes[i1],
+            // トリガー表示（立った側に矢印）
+            if (trigBuy)
+                Chart.DrawIcon($"TRIG_BUY_{i1}", ChartIconType.UpArrow, Bars.OpenTimes[i1],
+                               Bars.LowPrices[i1] * 0.998, Color.Lime);
+            if (trigSell)
+                Chart.DrawIcon($"TRIG_SELL_{i1}", ChartIconType.DownArrow, Bars.OpenTimes[i1],
                        Bars.HighPrices[i1] * 1.002, Color.Red);
-}
+        }
     }
 }
