@@ -2,7 +2,6 @@ using cAlgo.Indicators;
 using cAlgo.API.Indicators;
 using cAlgo.API.Internals;
 using cAlgo.API;
-using System.Threading;
 using System;   
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -288,7 +287,7 @@ namespace cAlgo
 
         // ===== State =====
         private AverageTrueRange _atr;
-        private ExponentialMovingAverage _ema;        private DateTime _lastTrade = DateTime.MinValue;
+        private ExponentialMovingAverage _ema;
         private DateTime _day = DateTime.MinValue;
         private volatile bool  _timerBusy = false;
         private DateTime _lastTimerTs = DateTime.MinValue;
@@ -488,7 +487,6 @@ private bool MicroConfirmShort() {
             _lastComputedBar = -1;
 
             // Initialize trade counters
-            _lastTrade = DateTime.MinValue;
             _tradesToday = 0;
          ClearRobotLines();   // 起動時に残骸を消す
          if (UseTimerCompute)
@@ -1389,7 +1387,7 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
             }
         }
             {
-                _lastTrade  =Server.Time; _tradesToday++;
+                _tradesToday++;
             if (Verbose) Print("[AUDIT] ORDER {0} vol={1} SL={2}p TP={3}p", side,volL,slPips,tpPips);
             }
         }
