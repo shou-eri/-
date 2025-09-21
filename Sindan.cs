@@ -6,6 +6,7 @@ using System.Threading;
 using System;   
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Linq;
 
 using System.Collections.Generic;
 
@@ -277,7 +278,7 @@ namespace cAlgo
         [Parameter("Debug Viz", Group = "Debug", DefaultValue = true)]
         public bool DebugViz { get; set; }
 
-        [Parameter("Draw Robot Lines", Group = "Debug", DefaultValue = false)]
+        [Parameter("Draw Robot Lines", Group = "Debug", DefaultValue = true)]
         public bool DrawRobotLines { get; set; }
 
         [Parameter("Cooldown Bars", DefaultValue = 0, MinValue = 0)]
@@ -661,6 +662,23 @@ private (bool block, double volScale, double extraBreak, string why) CheckEnergy
     }
     catch { /* no-throw for safety */ }
 }
+
+        // --- 診断：ポジション状況の監視 ---
+        private void DiagnosePositions()
+        {
+            if (Server.Time < _nextDiag) return;
+            _nextDiag = Server.Time.AddMinutes(5);
+            try 
+            {
+                foreach (var pos in Positions.Where(p => p.Label.StartsWith(LabelPrefix)))
+                {
+                    double currentPips = pos.Pips;
+                    double unrealizedPL = pos.NetProfit;
+                    Print($"[DIAG][POS] {pos.TradeType} #{pos.Id} pips={currentPips:F1} PL={unrealizedPL:F2} vol={pos.VolumeInUnits:F0}");
+                }
+            }
+            catch { /* no-throw for safety */ }
+        }
         // 期待値計算のためのヘルパーメソッド
 private double ComputeExpectedValue(double winRate, double winProfit, double loseRate, double loseLoss)
 {
@@ -784,6 +802,12 @@ else // trigSell
 
         // トレーリングは常時でもOK（必要ならフラグ化）
               TrailIfNeeded(_atrC);
+
+        // === 定期診断：エントリー状況の監視 ===
+        if (Positions.Count == 0) // ポジションがない時に診断情報を出力
+            DiagnoseEntry();
+        else // ポジションがある時はポジション状況を診断
+            DiagnosePositions();
 }
         // 発注ユーティリティ（SLは「価格」、TPは 2R、数量はリスク％から自動算出）
         private void TryEnter(TradeType side, int i1, double slPrice, double volScale)
