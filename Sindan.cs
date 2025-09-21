@@ -1102,53 +1102,149 @@ namespace cAlgo
         maxTrades = Math.Max(maxTrades - 1, 1);
         }
     }
-         // v/ATR に応じてフィボ帯を変化させる
-         private (double fMin, double fMax) GetFibBand(double vr) {
-         if (!PbAutoWidth) return (PbFibMin, PbFibMax);
-         if (vr >= 3.0) return (0.30, 0.55);
-         if (vr >= 1.5) return (0.38, 0.62);
-         return (0.50, 0.70);
-    }
 
-// ATR の極端値を抑える
-private double SoftATR() {
-    double a = _atrC;
-    a = Math.Max(a, PbAtrFloorPips * Symbol.PipSize);            // 下限
-    return Math.Min(a, PbAtrCapX * _atr.Result.LastValue);       // 上限
-}
+         #region Pullback Analysis Methods
 
-// ミクロ再開確認
-private bool MicroConfirmLong() {
-    if (!PbMicroConfirm) return true;
-    return Bars.ClosePrices.LastValue >
-           Math.Max(Bars.HighPrices.Last(1), Bars.HighPrices.Last(2));
-}
-private bool MicroConfirmShort() {
-    if (!PbMicroConfirm) return true;
-    return Bars.ClosePrices.LastValue <
-           Math.Min(Bars.LowPrices.Last(1), Bars.LowPrices.Last(2));
-}
+         /// <summary>
+         /// Adjusts Fibonacci retracement band based on velocity ratio
+         /// Higher velocity markets get tighter zones, lower velocity get wider zones
+         /// </summary>
+         /// <param name="vr">Velocity ratio (|velocity|/ATR)</param>
+         /// <returns>Tuple containing minimum and maximum Fibonacci levels</returns>
+         private (double fMin, double fMax) GetFibBand(double vr) 
+         {
+             if (!PbAutoWidth) return (PbFibMin, PbFibMax);
+             if (vr >= 3.0) return (0.30, 0.55);
+             if (vr >= 1.5) return (0.38, 0.62);
+             return (0.50, 0.70);
+         }
 
-      private bool HasOpen(string label, TradeType side)
-    {
-      string prefix = LabelPrefix;
-      foreach (var pos in Positions)
-        if (pos.SymbolName == SymbolName &&
-            pos.Label != null && pos.Label.StartsWith(prefix) &&
-            pos.TradeType == side)
+        /// <summary>
+        /// Calculates ATR with floor and ceiling constraints to prevent extreme values
+        /// Ensures ATR stays within reasonable bounds for pullback calculations
+        /// </summary>
+        /// <returns>Constrained ATR value</returns>
+        private double SoftATR() 
+        {
+            double a = _atrC;
+            a = Math.Max(a, PbAtrFloorPips * Symbol.PipSize);            // Floor
+            return Math.Min(a, PbAtrCapX * _atr.Result.LastValue);       // Ceiling
+        }
+
+        /// <summary>
+        /// Confirms long entry with micro-breakout validation
+        /// Requires current close to exceed recent highs for additional confirmation
+        /// </summary>
+        /// <returns>True if micro-confirmation criteria are met</returns>
+        private bool MicroConfirmLong() 
+        {
+            if (!PbMicroConfirm) return true;
+            return Bars.ClosePrices.LastValue >
+                   Math.Max(Bars.HighPrices.Last(1), Bars.HighPrices.Last(2));
+        }
+
+        /// <summary>
+        /// Confirms short entry with micro-breakdown validation
+        /// Requires current close to break below recent lows for additional confirmation
+        /// </summary>
+        /// <returns>True if micro-confirmation criteria are met</returns>
+        private bool MicroConfirmShort() 
+        {
+            if (!PbMicroConfirm) return true;
+            return Bars.ClosePrices.LastValue <
+                   Math.Min(Bars.LowPrices.Last(1), Bars.LowPrices.Last(2));
+        }
+
+        #endregion
+
+        #region Trade Management Methods
+
+        /// <summary>
+        /// Checks if there's an open position of the specified type
+        /// </summary>
+        /// <param name="label">Trade label to match</param>
+        /// <param name="side">Trade direction to check</param>
+        /// <returns>True if matching open position exists</returns>
+        private bool HasOpen(string label, TradeType side)
+        {
+            string prefix = LabelPrefix;
+            foreach (var pos in Positions)
+                if (pos.SymbolName == SymbolName &&
+                    pos.Label != null && pos.Label.StartsWith(prefix) &&
+                    pos.TradeType == side)
+                    return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Validates if new trade entry is allowed based on various filters
+        /// Checks cooldown, daily limits, existing positions, and spread conditions
+        /// </summary>
+        /// <param name="label">Trade label</param>
+        /// <param name="side">Trade direction</param>
+        /// <returns>True if entry is allowed</returns>
+        private bool CanEnter(string label, TradeType side)
+        {
+            if (CooldownMin > 0 && InCooldown()) return false;
+            int maxDaily = EffectiveMaxTradesPerDay();
+            if (maxDaily > 0 && _tradesToday >= maxDaily) return false;
+            if (HasOpen(label, side)) return false;
+            if (SpreadTooWide()) return false;
             return true;
-      return false;
-    }
-   
-       private bool CanEnter(string label, TradeType side)
-{
-    if (CooldownMin > 0 && InCooldown()) return false;
-    int maxDaily = EffectiveMaxTradesPerDay();
-    if (maxDaily > 0 && _tradesToday >= maxDaily) return false;
-    if (HasOpen(label, side)) return false;
-    // SpreadTooWide() が SpreadMaxPips を見ているので二重条件は不要
-    if (SpreadTooWide()) return false;
-            #endregion
+        }
+
+        /// <summary>
+        /// Checks if current spread exceeds maximum allowed threshold
+        /// </summary>
+        /// <returns>True if spread is too wide for trading</returns>
+        private bool SpreadTooWide()
+        {
+            double spreadPips = (Symbol.Ask - Symbol.Bid) / Symbol.PipSize;
+            return (SpreadMaxPips > 0.0) && (spreadPips > SpreadMaxPips);
+        }
+
+        /// <summary>
+        /// Checks for recent breakout above specified number of bars
+        /// </summary>
+        /// <param name="n">Number of bars to check</param>
+        /// <returns>True if current close breaks above recent highs</returns>
+        private bool BreakoutUp(int n)
+        {
+            double hi = double.MinValue;
+            for (int i = 1; i <= n; i++) hi = Math.Max(hi, Bars.HighPrices.Last(i));
+            return Bars.ClosePrices.LastValue >= hi - Symbol.TickSize*0.5; // Allow near-equal values
+        }
+
+        /// <summary>
+        /// Checks for recent breakdown below specified number of bars
+        /// </summary>
+        /// <param name="n">Number of bars to check</param>
+        /// <returns>True if current close breaks below recent lows</returns>
+        private bool BreakoutDown(int n)
+        {
+            double lo = double.MaxValue;
+            for (int i = 1; i <= n; i++) lo = Math.Min(lo, Bars.LowPrices.Last(i));
+            return Bars.ClosePrices.LastValue <= lo + Symbol.TickSize*0.5;
+        }
+
+        /// <summary>
+        /// Checks if robot is currently in cooldown period
+        /// </summary>
+        /// <returns>True if still in cooldown</returns>
+        private bool InCooldown()
+        {
+            if (_lastTrade == DateTime.MinValue) return false;
+            return Server.Time < _lastTrade.AddMinutes(CooldownMin);
+        }
+
+        /// <summary>
+        /// Logs rejection with formatted code and message
+        /// </summary>
+        /// <param name="code">Rejection code</param>
+        /// <param name="msg">Rejection message</param>
+        private void REJ(string code, string msg) => Print($"[REJ][{code}] {msg}");
+
+        #endregion
 
         #region Robot Lifecycle Methods
 
@@ -2263,6 +2359,12 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
             return Server.Time < _lastTrade.AddMinutes(CooldownMin);
         }
 
+        /// <summary>
+        /// Finds the highest value in a data series over the specified number of periods
+        /// </summary>
+        /// <param name="s">Data series to analyze</param>
+        /// <param name="n">Number of periods to look back</param>
+        /// <returns>Highest value found</returns>
         private static double Highest(DataSeries s, int n)
         {
             double v = double.MinValue; int end = s.Count - 1;
@@ -2270,6 +2372,12 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
             return v;
         }
 
+        /// <summary>
+        /// Finds the lowest value in a data series over the specified number of periods
+        /// </summary>
+        /// <param name="s">Data series to analyze</param>
+        /// <param name="n">Number of periods to look back</param>
+        /// <returns>Lowest value found</returns>
         private static double Lowest(DataSeries s, int n)
         {
             double v = double.MaxValue; int end = s.Count - 1;
@@ -2277,21 +2385,31 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
             return v;
         }
 
+        /// <summary>
+        /// Rounds a price to the nearest tick size
+        /// </summary>
+        /// <param name="price">Price to round</param>
+        /// <returns>Price rounded to tick boundary</returns>
         private double RoundToTick(double price) => Math.Round(price / Symbol.TickSize) * Symbol.TickSize;
 
+        /// <summary>
+        /// Generates a random number from a standard normal (Gaussian) distribution
+        /// Uses Box-Muller transformation with safety guards against extreme values
+        /// </summary>
+        /// <returns>Random value from normal distribution (mean=0, std=1)</returns>
         private double Gaussian()
-    {
-        // 0 と 1 を避ける（クランプ）
-        double u1 = _rng.NextDouble();
-        double u2 = _rng.NextDouble();
-        u1 = Math.Max(1e-12, Math.Min(1.0 - 1e-12, u1));
+        {
+            // Clamp values to avoid log(0) or extreme results
+            double u1 = _rng.NextDouble();
+            double u2 = _rng.NextDouble();
+            u1 = Math.Max(1e-12, Math.Min(1.0 - 1e-12, u1));
 
-        double z = Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
+            double z = Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
 
-        // 念のためのガード
-        if (double.IsNaN(z) || double.IsInfinity(z)) return 0.0;
-        return z;
-    }
+            // Safety guard against NaN/Infinity
+            if (double.IsNaN(z) || double.IsInfinity(z)) return 0.0;
+            return z;
+        }
         private void EnforceFridayFlat()
 {
     if (ForceFlatFriday != Toggle.ON) return;
