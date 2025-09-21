@@ -1,360 +1,1035 @@
-using cAlgo.Indicators;
-using cAlgo.API.Indicators;
-using cAlgo.API.Internals;
-using cAlgo.API;
-using System.Threading;
-using System;   
+using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Text;
-
-using System.Collections.Generic;
+using System.Threading;
+using cAlgo.API;
+using cAlgo.API.Indicators;
+using cAlgo.API.Internals;
+using cAlgo.Indicators;
 
 namespace cAlgo
 {
-    public enum Toggle { OFF, ON }
+    /// <summary>
+    /// Simple toggle enumeration for enabling/disabling features
+    /// </summary>
+    public enum Toggle 
+    { 
+        /// <summary>Feature is disabled</summary>
+        OFF, 
+        /// <summary>Feature is enabled</summary>
+        ON 
+    }
+
+    /// <summary>
+    /// Energy mode enumeration for controlling energy-based market filtering
+    /// </summary>
+    public enum EnergyMode 
+    { 
+        /// <summary>Energy filtering is disabled</summary>
+        Off, 
+        /// <summary>Block trades when energy conditions are not met</summary>
+        Block, 
+        /// <summary>Scale position size based on energy levels</summary>
+        Scale, 
+        /// <summary>Tighten entry requirements when energy is high</summary>
+        Tighten 
+    }
+
+    /// <summary>
+    /// Galileo Ultra Physics V5 - Advanced Physics-Based Trading Robot
+    /// 
+    /// This sophisticated trading robot implements a physics-based approach to market analysis and trading,
+    /// combining multiple advanced techniques:
+    /// 
+    /// Key Features:
+    /// - Physics Engine: Simulates price movement using mass, damping, springs, and friction
+    /// - Kalman Filtering: Advanced noise reduction and state estimation
+    /// - ZigZag Analysis: Swing-based breakout detection and trend following
+    /// - Pullback Entries: Fibonacci-based retracement strategy with dynamic zones
+    /// - Energy Gating: Market volatility filtering and position sizing
+    /// - Multi-timeframe Analysis: Comprehensive market structure evaluation
+    /// - Risk Management: Advanced trailing stops, position sizing, and drawdown protection
+    /// - Diagnostic Tools: Comprehensive logging and visualization capabilities
+    /// 
+    /// The robot uses a physical model where price is treated as a particle subject to various forces,
+    /// allowing for sophisticated prediction and analysis of market movements.
+    /// </summary>
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.None)]
     public class GalileoUltraPhysicsV5 : Robot
     {
-        // ===== Trade / Signal =====
-        [Parameter("Label Prefix", Group = "Trade", DefaultValue = "GAL_U4")]
+        #region Trading Parameters
+        
+        /// <summary>
+        /// Label prefix for identifying trades created by this robot instance
+        /// Used to distinguish this robot's trades from others on the same symbol
+        /// </summary>
+        [Parameter("Label Prefix", Group = "Trading Parameters", DefaultValue = "GAL_U4")]
         public string LabelPrefix { get; set; }
 
-        [Parameter("Units (fallback)", Group = "Trade", DefaultValue = 10000, MinValue = 1)]
+        /// <summary>
+        /// Fallback position size in units when risk percentage is disabled (set to 0)
+        /// This provides a fixed position size for manual risk management
+        /// </summary>
+        [Parameter("Units (fallback)", Group = "Trading Parameters", DefaultValue = 10000, MinValue = 1)]
         public int Units { get; set; }
 
-        [Parameter("Risk % (0=fixed Units)", Group = "Trade", DefaultValue = 1.0, MinValue = 0, MaxValue = 5)]
+        /// <summary>
+        /// Risk percentage of account balance per trade. Set to 0 to use fixed units instead.
+        /// This controls position sizing based on account balance and stop loss distance
+        /// Valid range: 0-5% to prevent excessive risk
+        /// </summary>
+        [Parameter("Risk % (0=fixed Units)", Group = "Trading Parameters", DefaultValue = 1.0, MinValue = 0, MaxValue = 5)]
         public double RiskPercent { get; set; }
 
-        [Parameter("Cooldown (min)", Group = "Trade", DefaultValue = 0)]
+        /// <summary>
+        /// Minimum time in minutes between trades to prevent overtrading
+        /// Set to 0 to disable cooldown period
+        /// </summary>
+        [Parameter("Cooldown (min)", Group = "Trading Parameters", DefaultValue = 0)]
         public int CooldownMin { get; set; }
 
-        [Parameter("Max Trades / Day", Group = "Trade", DefaultValue = 0)]
+        /// <summary>
+        /// Maximum number of trades allowed per trading day. Set to 0 for unlimited.
+        /// Helps control daily exposure and prevents excessive trading
+        /// </summary>
+        [Parameter("Max Trades / Day", Group = "Trading Parameters", DefaultValue = 0)]
         public int MaxTradesPerDay { get; set; }
 
-        [Parameter("Use Daily Tilt", Group="Trade", DefaultValue = true)]
+        /// <summary>
+        /// Enable daily performance-based adjustments to risk and trade limits
+        /// Automatically adjusts parameters based on daily win rate performance
+        /// </summary>
+        [Parameter("Use Daily Tilt", Group="Trading Parameters", DefaultValue = true)]
         public bool UseDailyTilt { get; set; }
 
-        [Parameter("Lookback", Group = "Signal", DefaultValue = 50, MinValue = 10)]
-        public int Lookback { get; set; }
-
-        [Parameter("ATR Period", Group = "Risk", DefaultValue = 14)]
-        public int AtrPeriod { get; set; }
-
-        [Parameter("Trail k (ATR)", Group = "Risk", DefaultValue = 0.8)]
-        public double TrailAtrK { get; set; }
-
-        [Parameter("TP R:R", Group = "Risk", DefaultValue = 1.5)]
-        public double RMultiple { get; set; }
-
-        [Parameter("Max Spread (pips)", Group = "Risk", DefaultValue = 0.0, MinValue = 0.0)]
-        public double MaxSpreadPips { get; set; }
-
-        [Parameter("Max Market Range (pips)", Group = "Risk", DefaultValue = 0, MinValue = 0)]
-        public int MaxMarketRangePips { get; set; } // 0 なら未指定
-
-        [Parameter("Trail: Min dist from price (pips)", Group="Risk", DefaultValue = 0.5, MinValue = 0.0)]
-        public double MinSLFromPricePips { get; set; }
-
-        [Parameter("Trail mode: Chandelier", Group="Risk", DefaultValue = true)]
-        public bool TrailChandelier { get; set; }
-
-        // 例: サーバ時刻の 00:00 を日次境界にする（UTC運用ならそのままでOK）
-        [Parameter("Daily reset hour (server time)", Group="Risk", DefaultValue = 0, MinValue = 0, MaxValue = 23)]
-        public int DailyResetHour { get; set; }
-
-        // リセット時にロボが描いた線を掃除したい場合
-        [Parameter("Clear lines on daily reset", Group="Risk", DefaultValue = false)]
-        public bool ClearLinesOnDailyReset { get; set; }
-
-        [Parameter("Force Flat on Friday", Group = "Risk", DefaultValue = Toggle.ON)]
-        public Toggle ForceFlatFriday { get; set; }
-
-        [Parameter("Friday Flat Hour (server time)", Group = "Risk", DefaultValue = 21, MinValue = 0, MaxValue = 23)]
-        public int FridayFlatHour { get; set; }
-
-        [Parameter("Friday Flat Minute", Group = "Risk", DefaultValue = 55, MinValue = 0, MaxValue = 59)]
-        public int FridayFlatMinute { get; set; }
-
-        [Parameter("Block After Friday Flat", Group = "Risk", DefaultValue = Toggle.ON)]
-        public Toggle BlockAfterFridayFlat { get; set; }
-
-        [Parameter("Cancel Pending Orders", Group = "Risk", DefaultValue = Toggle.ON)]
-        public Toggle CancelPendingAfterFlat { get; set; }
-
-        [Parameter("Risk %", DefaultValue = 0.5, MinValue = 0, MaxValue = 10)]
+        /// <summary>
+        /// Risk percentage for position sizing calculations
+        /// Alternative risk parameter for enhanced risk management
+        /// </summary>
+        [Parameter("Risk %", Group = "Trading Parameters", DefaultValue = 0.5, MinValue = 0, MaxValue = 10)]
         public double RiskPct { get; set; }
 
-        [Parameter("Jitter (ms)", Group = "Exec", DefaultValue = 700)]
-        public int JitterMs { get; set; }
+        #endregion
 
-        // ===== Parameters (Gates) =====
-        [Parameter("Use Energy Gate", Group = "Gates", DefaultValue = false)]
-        public bool UseEnergyGate { get; set; }
+        #region Signal and Market Analysis Parameters
+        
+        /// <summary>
+        /// Number of bars to look back for high/low analysis and market structure
+        /// Higher values provide more stable signals but may be slower to react
+        /// Valid range: 10-500 bars
+        /// </summary>
+        [Parameter("Lookback", Group = "Signal and Market Analysis", DefaultValue = 50, MinValue = 10)]
+        public int Lookback { get; set; }
 
-        [Parameter("Energy Min (Etot)", Group = "Gates", DefaultValue = 0.00010)]
-        public double EnergyMin { get; set; }
+        /// <summary>
+        /// Period for Average True Range calculation used throughout the system
+        /// ATR is fundamental for volatility-based calculations and risk management
+        /// Standard value is 14 periods
+        /// </summary>
+        [Parameter("ATR Period", Group = "Signal and Market Analysis", DefaultValue = 14)]
+        public int AtrPeriod { get; set; }
 
-        [Parameter("Energy Max (Etot)", Group = "Gates", DefaultValue = 0.50)]
-        public double EnergyMax { get; set; }
-
-        [Parameter("Max |dE|", Group = "Gates", DefaultValue = 0.06)]
-        public double MaxAbsDE { get; set; }
-
-        // 追加: エネルギーゲートのモード
-        public enum EnergyMode { Off, Block, Scale, Tighten }
-        [Parameter("Energy Mode", DefaultValue = EnergyMode.Scale)] public EnergyMode EngMode { get; set; }
-        [Parameter("Energy ATR Period", DefaultValue = 14, MinValue = 5)] public int EngAtrPeriod { get; set; }
-        [Parameter("Quiet ≤ (x ATR)", DefaultValue = 0.20, MinValue = 0.0)] public double EngQuietX { get; set; }  // 低すぎ閾
-        [Parameter("Hot  ≥ (x ATR)", DefaultValue = 1.20, MinValue = 0.0)] public double EngHotX { get; set; }     // 高すぎ閾
-
-        // Scale/Tightenの強さ
-        [Parameter("Min Volume Scale", DefaultValue = 0.35, MinValue = 0.1, MaxValue = 1.0)] public double EngMinScale { get; set; }
-        [Parameter("Extra Break @Hot (pips)", DefaultValue = 2.0, MinValue = 0.0)] public double EngExtraBreakPips { get; set; }
-        [Parameter("Stop Pips Min (0=auto)", DefaultValue = 0.0, MinValue = 0.0)]
-        public double StopPipsMin { get; set; }
-
-        private AverageTrueRange _atrEng;
-
-        // ===== Physics =====
-        [Parameter("Mass m", Group = "Physics", DefaultValue = 1.0)]
-        public double Mass { get; set; }
-
-        [Parameter("Damping c", Group = "Physics", DefaultValue = 0.30)]
-        public double Damping { get; set; }
-
-        [Parameter("Spring k1 (Donchian)", Group = "Physics", DefaultValue = 0.60)]
-        public double SpringK1 { get; set; }
-
-        [Parameter("Spring k2 (EMA)", Group = "Physics", DefaultValue = 0.30)]
-        public double SpringK2 { get; set; }
-
-        [Parameter("EMA Period", Group = "Physics", DefaultValue = 200)]
+        /// <summary>
+        /// Period for Exponential Moving Average used in physics engine and trend analysis
+        /// Longer periods provide smoother trend identification
+        /// Valid range: 50-500 periods
+        /// </summary>
+        [Parameter("EMA Period", Group = "Signal and Market Analysis", DefaultValue = 200)]
         public int EmaPeriod { get; set; }
 
-        [Parameter("Coulomb μ0", Group = "Friction", DefaultValue = 0.00002)]
-        public double FrictionMu0 { get; set; }
+        #endregion
 
-        [Parameter("Stribeck μ1", Group = "Friction", DefaultValue = 0.00010)]
-        public double FrictionMu1 { get; set; }
+        #region Risk Management Parameters
+        
+        /// <summary>
+        /// ATR multiplier for trailing stop calculations
+        /// Higher values give more room for price fluctuations but larger potential losses
+        /// Typical range: 0.5-2.0
+        /// </summary>
+        [Parameter("Trail k (ATR)", Group = "Risk Management", DefaultValue = 0.8)]
+        public double TrailAtrK { get; set; }
 
-        [Parameter("Stribeck v* (abs)", Group = "Friction", DefaultValue = 0.00020)]
-        public double StribeckVStar { get; set; }
+        /// <summary>
+        /// Take profit multiplier as a ratio of stop loss distance (Risk:Reward ratio)
+        /// 1.5 means take profit is 1.5x the stop loss distance
+        /// Higher values target larger profits but reduce win rate
+        /// </summary>
+        [Parameter("TP R:R", Group = "Risk Management", DefaultValue = 1.5)]
+        public double RMultiple { get; set; }
 
-        [Parameter("Drive Gain", Group = "Physics", DefaultValue = 1.0)]
-        public double DriveGain { get; set; }
+        /// <summary>
+        /// Maximum allowed spread in pips before blocking trades
+        /// Set to 0 to disable spread filtering
+        /// Prevents trading during high spread conditions
+        /// </summary>
+        [Parameter("Max Spread (pips)", Group = "Risk Management", DefaultValue = 0.0, MinValue = 0.0)]
+        public double MaxSpreadPips { get; set; }
 
-        [Parameter("Noise k (ATR→σ)", Group = "Physics", DefaultValue = 0.10)]
-        public double NoiseK { get; set; }
+        /// <summary>
+        /// Maximum market range in pips to prevent trading in overly volatile conditions
+        /// Set to 0 to disable this filter
+        /// </summary>
+        [Parameter("Max Market Range (pips)", Group = "Risk Management", DefaultValue = 0, MinValue = 0)]
+        public int MaxMarketRangePips { get; set; }
 
-        [Parameter("Min |v| for momentum", Group = "Physics", DefaultValue = 0.00005)]
-        public double MinMomentum { get; set; }
+        /// <summary>
+        /// Minimum distance in pips that trailing stop must maintain from current price
+        /// Prevents stops from being placed too close to current market price
+        /// </summary>
+        [Parameter("Trail: Min dist from price (pips)", Group="Risk Management", DefaultValue = 0.5, MinValue = 0.0)]
+        public double MinSLFromPricePips { get; set; }
 
-        [Parameter("SubSteps (per bar)", Group = "Physics", DefaultValue = 1, MinValue = 1, MaxValue = 20)]
-        public int SubSteps { get; set; }
+        /// <summary>
+        /// Use Chandelier-style trailing stops based on highest high/lowest low since entry
+        /// When enabled, stops trail based on extreme prices rather than current price
+        /// </summary>
+        [Parameter("Trail mode: Chandelier", Group="Risk Management", DefaultValue = true)]
+        public bool TrailChandelier { get; set; }
 
-        [Parameter("Use Pullback Entries", Group="Pullback", DefaultValue = true)]
-        public bool UsePullbackEntries { get; set; }
+        /// <summary>
+        /// Hour of day (server time) when daily trade counters reset
+        /// Used for managing daily trade limits and statistics
+        /// Valid range: 0-23 hours
+        /// </summary>
+        [Parameter("Daily reset hour (server time)", Group="Risk Management", DefaultValue = 0, MinValue = 0, MaxValue = 23)]
+        public int DailyResetHour { get; set; }
 
-        [Parameter("PB Fib Min", Group="Pullback", DefaultValue = 0.3)]
-        public double PbFibMin { get; set; }
+        /// <summary>
+        /// Automatically clear robot-drawn lines when daily reset occurs
+        /// Helps maintain clean charts during extended operation
+        /// </summary>
+        [Parameter("Clear lines on daily reset", Group="Risk Management", DefaultValue = false)]
+        public bool ClearLinesOnDailyReset { get; set; }
 
-        [Parameter("PB Fib Max", Group="Pullback", DefaultValue = 0.7)]
-        public double PbFibMax { get; set; }
+        /// <summary>
+        /// Force closure of all positions on Friday at specified time
+        /// Helps avoid weekend gaps and reduces weekend risk exposure
+        /// </summary>
+        [Parameter("Force Flat on Friday", Group = "Risk Management", DefaultValue = Toggle.ON)]
+        public Toggle ForceFlatFriday { get; set; }
 
-        [Parameter("PB ATR Buffer X", Group="Pullback", DefaultValue = 0.25, MinValue = 0.0)]
-        public double PbAtrBufX { get; set; }
+        /// <summary>
+        /// Hour on Friday when forced position closure occurs
+        /// Should be set before market close to ensure execution
+        /// Valid range: 0-23 hours
+        /// </summary>
+        [Parameter("Friday Flat Hour (server time)", Group = "Risk Management", DefaultValue = 21, MinValue = 0, MaxValue = 23)]
+        public int FridayFlatHour { get; set; }
 
-        [Parameter("PB Swing Backstep", Group="Pullback", DefaultValue = 3, MinValue = 2, MaxValue = 10)]
-        public int PbBack { get; set; }
+        /// <summary>
+        /// Minute within the Friday flat hour when closure occurs
+        /// Provides precise timing for position closure
+        /// Valid range: 0-59 minutes
+        /// </summary>
+        [Parameter("Friday Flat Minute", Group = "Risk Management", DefaultValue = 55, MinValue = 0, MaxValue = 59)]
+        public int FridayFlatMinute { get; set; }
 
-        [Parameter("PB Lookback Bars", Group="Pullback", DefaultValue = 400, MinValue = 50)]
-        public int PbLook { get; set; }
+        /// <summary>
+        /// Block new trades after Friday flat until next trading week
+        /// Prevents new positions from being opened over the weekend
+        /// </summary>
+        [Parameter("Block After Friday Flat", Group = "Risk Management", DefaultValue = Toggle.ON)]
+        public Toggle BlockAfterFridayFlat { get; set; }
 
-        [Parameter("PB Need EMA Slope", Group="Pullback", DefaultValue = true)]
-        public bool PbNeedEmaSlope { get; set; }
+        /// <summary>
+        /// Cancel all pending orders when Friday flat is triggered
+        /// Ensures clean slate for next trading week
+        /// </summary>
+        [Parameter("Cancel Pending Orders", Group = "Risk Management", DefaultValue = Toggle.ON)]
+        public Toggle CancelPendingAfterFlat { get; set; }
 
-        [Parameter("PB Min v", Group="Pullback", DefaultValue = 0.0)]
-        public double PbMinV { get; set; }   // 物理：最小速度（補助フィルタ）
+        /// <summary>
+        /// Minimum stop loss distance in pips
+        /// Ensures stops are placed at meaningful distances from entry
+        /// Valid range: 0+ pips (0 = auto-calculated)
+        /// </summary>
+        [Parameter("Stop Pips Min (0=auto)", Group = "Risk Management", DefaultValue = 0.0, MinValue = 0.0)]
+        public double StopPipsMin { get; set; }
 
-        [Parameter("PB Auto Width", Group="Pullback", DefaultValue = true)]
-        public bool PbAutoWidth { get; set; }
-
-        [Parameter("PB ATR Floor (pips)", Group="Pullback", DefaultValue = 6.0, MinValue = 0)]
-        public double PbAtrFloorPips { get; set; }
-
-        [Parameter("PB ATR Cap x", Group="Pullback", DefaultValue = 1.20, MinValue = 0.8, MaxValue = 3)]
-        public double PbAtrCapX { get; set; }
-
-        [Parameter("PB Micro-Confirm", Group="Pullback", DefaultValue = false)]
-        public bool PbMicroConfirm { get; set; }
-
-        [Parameter("PB Zone Tol (pips)",   Group="Pullback", DefaultValue = 2.0, MinValue=0)]
-        public double PbZoneTolPips { get; set; }
-
-        [Parameter("PB Confirm Lookback",  Group="Pullback", DefaultValue = 2, MinValue=1, MaxValue=5)]
-        public int PbConfirmLookback { get; set; }
-
-        [Parameter("PB Arm Bars",          Group="Pullback", DefaultValue = 10, MinValue=1, MaxValue=20)]
-        public int PbArmBars { get; set; }
-
-        [Parameter("PB Relax EMA Slope",   Group="Pullback", DefaultValue = true)]
-        public bool PbRelaxEmaSlope { get; set; }   // true=弱めに判定
-
-        [Parameter("PB Min vr (|v|/ATR)",  Group="Pullback", DefaultValue = 0.45, MinValue=0)]
-        public double PbMinVr { get; set; }         // 既存より緩く（0.60→0.45 推奨）
-
-        // ===== Kalman =====
-        [Parameter("Use Kalman", Group = "Kalman", DefaultValue = true)]
-        public bool UseKalman { get; set; }
-
-        [Parameter("Q base", Group = "Kalman", DefaultValue = 1e-6)]
-        public double KalmanQ { get; set; }
-
-        [Parameter("R base", Group = "Kalman", DefaultValue = 1e-6)]
-        public double KalmanR { get; set; }
-
-        // ===== Energy Gate =====
-        [Parameter("Min E (×ATR^2)", Group = "Energy", DefaultValue = 0.05)]
-        public double MinEnergyATR2 { get; set; }
-
-        [Parameter("Min dE per bar", Group = "Energy", DefaultValue = 0.0)]
-        public double MinDE { get; set; }
-
-        // ===== Gap Guard =====
-        [Parameter("Gap K (×ATR)", Group = "Gap", DefaultValue = 1.5)]
-        public double GapK { get; set; }
-
-        [Parameter("Gap Cooldown Bars", Group = "Gap", DefaultValue = 0, MinValue = 0)]
-        public int GapCooldownBars { get; set; }
-
-        // ==== ZigZag escape parameters ====
-        [Parameter("Use ZigZag Escape", Group = "Exit", DefaultValue = true)]
-        public bool UseZigZagEscape { get; set; }       
-
-        [Parameter("ZZ BackStep", Group = "Exit", DefaultValue = 3, MinValue = 1)]
-        public int ZzBackStep { get; set; }
-
-        [Parameter("ZZ Buffer ATR×", Group = "Exit", DefaultValue = 0.0)]
-        public double ZzBufferAtrX { get; set; }
-
-        // ピボットより少し外側に置くための余白（pips）
-        [Parameter("ZZ Buffer Pips", DefaultValue = 2)]
-        public int ZzBufferPips { get; set; }
-
-        // ===== ZigZag =====
-        [Parameter("ZZ Break Buffer (ATR×)", Group = "ZigZag", DefaultValue = 0.4)]
-        public double ZzBreakAtrX { get; set; }
-
-        [Parameter("ZZ Break Buffer (pips)", Group = "ZigZag", DefaultValue = 2.0)]
-        public double ZzBreakPips { get; set; }
-
-        [Parameter("Show ZigZag on Chart", Group="ZigZag", DefaultValue = true)]
-        public bool ShowZigZagOnChart { get; set; }
-
-        // Enable or disable using ZigZag breakouts as entry triggers. When false
-        // the robot will rely solely on pullback entries (if enabled) for new
-        // positions. ZigZagEscape remains active for exit/trailing even when
-        // break entries are disabled.
-        [Parameter("Use ZZ Break Entries", Group="ZigZag", DefaultValue = true)]
-        public bool UseZzBreakEntries { get; set; }
-
-        // ===== Timer/Exec =====
-        [Parameter("Use Timer Compute", Group = "Exec", DefaultValue = true)]
-        public bool UseTimerCompute { get; set; }
-
-        [Parameter("Calc Every (sec)", Group = "Exec", DefaultValue = 300, MinValue = 1, MaxValue = 3600)]
-        public int CalcEverySec { get; set; }
-      
-        [Parameter("Min Stops (pips)", Group = "Exec", DefaultValue = 0, MinValue = 0)]
-        public int MinStopsPips { get; set; }
-
-        [Parameter("Verbose Audit", Group = "Debug", DefaultValue = true)]
-        public bool Verbose { get; set; }
-
-        [Parameter("Audit Every N Bars", Group = "Debug", DefaultValue = 1, MinValue = 1, MaxValue = 50)]
-        public int AuditEveryN { get; set; }
-
-        [Parameter("Debug Viz", Group = "Debug", DefaultValue = true)]
-        public bool DebugViz { get; set; }
-
-        [Parameter("Draw Robot Lines", Group = "Debug", DefaultValue = false)]
-        public bool DrawRobotLines { get; set; }
-
-        [Parameter("Cooldown Bars", DefaultValue = 0, MinValue = 0)]
-        public int CooldownBars { get; set; }
-
-        [Parameter("Max Spread (pips)", DefaultValue = 2.0, MinValue = 0.0)]
+        /// <summary>
+        /// Alternative maximum spread parameter for additional filtering
+        /// Used in conjunction with MaxSpreadPips for enhanced spread control
+        /// </summary>
+        [Parameter("Max Spread (pips)", Group = "Risk Management", DefaultValue = 2.0, MinValue = 0.0)]
         public double SpreadMaxPips { get; set; }
 
-        [Parameter("Label", DefaultValue = "Sindan")] public string Label { get; set; }
-        [Parameter("Timer Interval (ms)", DefaultValue = 250)]
+        #endregion
+
+        #region Execution Settings
+        
+        /// <summary>
+        /// Random jitter in milliseconds to add to trade execution timing
+        /// Helps prevent predictable timing patterns and reduces slippage
+        /// Typical range: 100-2000ms
+        /// </summary>
+        [Parameter("Jitter (ms)", Group = "Execution Settings", DefaultValue = 700)]
+        public int JitterMs { get; set; }
+
+        /// <summary>
+        /// Enable timer-based computation for continuous market analysis
+        /// When enabled, physics calculations run on timer rather than only on bar close
+        /// </summary>
+        [Parameter("Use Timer Compute", Group = "Execution Settings", DefaultValue = true)]
+        public bool UseTimerCompute { get; set; }
+
+        /// <summary>
+        /// Frequency in seconds for timer-based calculations
+        /// Lower values provide more responsive analysis but use more CPU
+        /// Valid range: 1-3600 seconds
+        /// </summary>
+        [Parameter("Calc Every (sec)", Group = "Execution Settings", DefaultValue = 300, MinValue = 1, MaxValue = 3600)]
+        public int CalcEverySec { get; set; }
+
+        /// <summary>
+        /// Minimum stop loss distance in pips for execution validation
+        /// Prevents execution of trades with inadequate stop distances
+        /// Valid range: 0+ pips
+        /// </summary>
+        [Parameter("Min Stops (pips)", Group = "Execution Settings", DefaultValue = 0, MinValue = 0)]
+        public int MinStopsPips { get; set; }
+
+        /// <summary>
+        /// Cooldown period in number of bars between trades
+        /// Alternative to time-based cooldown for bar-based spacing
+        /// Valid range: 0+ bars
+        /// </summary>
+        [Parameter("Cooldown Bars", Group = "Execution Settings", DefaultValue = 0, MinValue = 0)]
+        public int CooldownBars { get; set; }
+
+        /// <summary>
+        /// Timer interval in milliseconds for periodic processing
+        /// Controls how frequently the timer callback executes
+        /// Typical range: 100-1000ms
+        /// </summary>
+        [Parameter("Timer Interval (ms)", Group = "Execution Settings", DefaultValue = 250)]
         public int TimerIntervalMs { get; set; }
 
-        // ===== Trail =====
-        [Parameter("Trail ATR x", Group="Trail", DefaultValue = 1.5)]
+        #endregion
+
+        #region Energy Gate Parameters
+        
+        /// <summary>
+        /// Enable energy-based market filtering to avoid low-quality trading conditions
+        /// When enabled, analyzes market energy levels to determine trade suitability
+        /// </summary>
+        [Parameter("Use Energy Gate", Group = "Energy Gate Parameters", DefaultValue = false)]
+        public bool UseEnergyGate { get; set; }
+
+        /// <summary>
+        /// Minimum total energy level required for trade entry
+        /// Lower values may result in trades during quiet market conditions
+        /// Typical range: 0.0001-0.01
+        /// </summary>
+        [Parameter("Energy Min (Etot)", Group = "Energy Gate Parameters", DefaultValue = 0.00010)]
+        public double EnergyMin { get; set; }
+
+        /// <summary>
+        /// Maximum total energy level allowed for trade entry
+        /// Higher values may indicate overly volatile or chaotic market conditions
+        /// Typical range: 0.1-1.0
+        /// </summary>
+        [Parameter("Energy Max (Etot)", Group = "Energy Gate Parameters", DefaultValue = 0.50)]
+        public double EnergyMax { get; set; }
+
+        /// <summary>
+        /// Maximum absolute energy change allowed between calculations
+        /// Helps filter out erratic energy spikes that may indicate poor data
+        /// Typical range: 0.01-0.2
+        /// </summary>
+        [Parameter("Max |dE|", Group = "Energy Gate Parameters", DefaultValue = 0.06)]
+        public double MaxAbsDE { get; set; }
+
+        /// <summary>
+        /// Energy gate operating mode: Off, Block, Scale, or Tighten
+        /// Controls how the robot responds to different energy conditions
+        /// </summary>
+        [Parameter("Energy Mode", Group = "Energy Gate Parameters", DefaultValue = EnergyMode.Scale)] 
+        public EnergyMode EngMode { get; set; }
+
+        /// <summary>
+        /// ATR period for energy calculations
+        /// Used to normalize energy values relative to current volatility
+        /// Valid range: 5-50 periods
+        /// </summary>
+        [Parameter("Energy ATR Period", Group = "Energy Gate Parameters", DefaultValue = 14, MinValue = 5)] 
+        public int EngAtrPeriod { get; set; }
+
+        /// <summary>
+        /// Threshold for quiet market conditions (energy ≤ x * ATR)
+        /// Markets below this level are considered too quiet for reliable trading
+        /// Typical range: 0.1-0.5
+        /// </summary>
+        [Parameter("Quiet ≤ (x ATR)", Group = "Energy Gate Parameters", DefaultValue = 0.20, MinValue = 0.0)] 
+        public double EngQuietX { get; set; }
+
+        /// <summary>
+        /// Threshold for hot market conditions (energy ≥ x * ATR)
+        /// Markets above this level may be too volatile for safe trading
+        /// Typical range: 1.0-3.0
+        /// </summary>
+        [Parameter("Hot  ≥ (x ATR)", Group = "Energy Gate Parameters", DefaultValue = 1.20, MinValue = 0.0)] 
+        public double EngHotX { get; set; }
+
+        /// <summary>
+        /// Minimum volume scaling factor when reducing position size in hot markets
+        /// Prevents position sizes from becoming too small to be meaningful
+        /// Valid range: 0.1-1.0
+        /// </summary>
+        [Parameter("Min Volume Scale", Group = "Energy Gate Parameters", DefaultValue = 0.35, MinValue = 0.1, MaxValue = 1.0)] 
+        public double EngMinScale { get; set; }
+
+        /// <summary>
+        /// Additional breakout requirement in pips when markets are hot
+        /// Makes entry requirements more stringent during volatile conditions
+        /// Valid range: 0+ pips
+        /// </summary>
+        [Parameter("Extra Break @Hot (pips)", Group = "Energy Gate Parameters", DefaultValue = 2.0, MinValue = 0.0)] 
+        public double EngExtraBreakPips { get; set; }
+
+        /// <summary>
+        /// Minimum energy level normalized by ATR squared
+        /// Alternative energy threshold calculation method
+        /// Typical range: 0.01-1.0
+        /// </summary>
+        [Parameter("Min E (×ATR^2)", Group = "Energy Gate Parameters", DefaultValue = 0.05)]
+        public double MinEnergyATR2 { get; set; }
+
+        /// <summary>
+        /// Minimum energy change per bar required for trade consideration
+        /// Ensures sufficient market movement for meaningful signals
+        /// Valid range: 0+ (0 = disabled)
+        /// </summary>
+        [Parameter("Min dE per bar", Group = "Energy Gate Parameters", DefaultValue = 0.0)]
+        public double MinDE { get; set; }
+
+        #endregion
+
+        #region Physics Engine Parameters
+        
+        /// <summary>
+        /// Mass parameter for physics simulation (m in F=ma)
+        /// Higher mass creates more inertial behavior, slower to change direction
+        /// Lower mass creates more responsive movement
+        /// Typical range: 0.1-10.0
+        /// </summary>
+        [Parameter("Mass m", Group = "Physics Engine Parameters", DefaultValue = 1.0)]
+        public double Mass { get; set; }
+
+        /// <summary>
+        /// Damping coefficient for velocity decay (simulates market friction)
+        /// Higher values cause faster velocity decay, more stable behavior
+        /// Lower values allow momentum to persist longer
+        /// Typical range: 0.1-1.0
+        /// </summary>
+        [Parameter("Damping c", Group = "Physics Engine Parameters", DefaultValue = 0.30)]
+        public double Damping { get; set; }
+
+        /// <summary>
+        /// Spring constant for Donchian channel mean reversion force
+        /// Controls strength of pull towards price channel midpoint
+        /// Higher values create stronger mean reversion tendency
+        /// Typical range: 0.1-2.0
+        /// </summary>
+        [Parameter("Spring k1 (Donchian)", Group = "Physics Engine Parameters", DefaultValue = 0.60)]
+        public double SpringK1 { get; set; }
+
+        /// <summary>
+        /// Spring constant for EMA mean reversion force
+        /// Controls strength of pull towards exponential moving average
+        /// Higher values create stronger trend-following behavior
+        /// Typical range: 0.1-1.0
+        /// </summary>
+        [Parameter("Spring k2 (EMA)", Group = "Physics Engine Parameters", DefaultValue = 0.30)]
+        public double SpringK2 { get; set; }
+
+        /// <summary>
+        /// Coulomb friction coefficient (static friction when velocity = 0)
+        /// Simulates market resistance to initial movement
+        /// Higher values require more force to initiate movement
+        /// Typical range: 0.00001-0.001
+        /// </summary>
+        [Parameter("Coulomb μ0", Group = "Physics Engine Parameters", DefaultValue = 0.00002)]
+        public double FrictionMu0 { get; set; }
+
+        /// <summary>
+        /// Stribeck friction coefficient (kinetic friction at high velocities)
+        /// Simulates market resistance during rapid price movements
+        /// Typically higher than Coulomb friction
+        /// Typical range: 0.0001-0.01
+        /// </summary>
+        [Parameter("Stribeck μ1", Group = "Physics Engine Parameters", DefaultValue = 0.00010)]
+        public double FrictionMu1 { get; set; }
+
+        /// <summary>
+        /// Stribeck velocity threshold (transition point between friction regimes)
+        /// Velocity level where friction transitions from static to kinetic
+        /// Lower values make friction transition more sensitive
+        /// Typical range: 0.0001-0.01
+        /// </summary>
+        [Parameter("Stribeck v* (abs)", Group = "Physics Engine Parameters", DefaultValue = 0.00020)]
+        public double StribeckVStar { get; set; }
+
+        /// <summary>
+        /// Drive gain for external force based on price position relative to bands
+        /// Amplifies momentum when price moves beyond normal ranges
+        /// Higher values create stronger breakout behavior
+        /// Typical range: 0.5-3.0
+        /// </summary>
+        [Parameter("Drive Gain", Group = "Physics Engine Parameters", DefaultValue = 1.0)]
+        public double DriveGain { get; set; }
+
+        /// <summary>
+        /// Noise scaling factor (ATR multiplier for random noise injection)
+        /// Simulates market randomness and uncertainty
+        /// Higher values add more stochastic behavior
+        /// Typical range: 0.0-0.5
+        /// </summary>
+        [Parameter("Noise k (ATR→σ)", Group = "Physics Engine Parameters", DefaultValue = 0.10)]
+        public double NoiseK { get; set; }
+
+        /// <summary>
+        /// Minimum velocity magnitude required for momentum calculations
+        /// Prevents noise from being interpreted as meaningful movement
+        /// Lower values make system more sensitive to small changes
+        /// Typical range: 0.00001-0.001
+        /// </summary>
+        [Parameter("Min |v| for momentum", Group = "Physics Engine Parameters", DefaultValue = 0.00005)]
+        public double MinMomentum { get; set; }
+
+        /// <summary>
+        /// Number of physics sub-steps per bar for integration accuracy
+        /// Higher values provide more accurate simulation but use more CPU
+        /// Lower values are faster but may reduce simulation quality
+        /// Valid range: 1-20 steps
+        /// </summary>
+        [Parameter("SubSteps (per bar)", Group = "Physics Engine Parameters", DefaultValue = 1, MinValue = 1, MaxValue = 20)]
+        public int SubSteps { get; set; }
+
+        #endregion
+
+        #region Pullback Entry Parameters
+        
+        /// <summary>
+        /// Enable pullback-based entry strategy using Fibonacci retracement levels
+        /// When enabled, looks for entries on retracements within trending moves
+        /// </summary>
+        [Parameter("Use Pullback Entries", Group="Pullback Entry Parameters", DefaultValue = true)]
+        public bool UsePullbackEntries { get; set; }
+
+        /// <summary>
+        /// Minimum Fibonacci retracement level for pullback zone (0.0-1.0)
+        /// Lower values target shallower pullbacks, higher frequency but lower quality
+        /// Typical range: 0.2-0.5
+        /// </summary>
+        [Parameter("PB Fib Min", Group="Pullback Entry Parameters", DefaultValue = 0.3)]
+        public double PbFibMin { get; set; }
+
+        /// <summary>
+        /// Maximum Fibonacci retracement level for pullback zone (0.0-1.0)
+        /// Higher values target deeper pullbacks, lower frequency but higher quality
+        /// Typical range: 0.5-0.8
+        /// </summary>
+        [Parameter("PB Fib Max", Group="Pullback Entry Parameters", DefaultValue = 0.7)]
+        public double PbFibMax { get; set; }
+
+        /// <summary>
+        /// ATR multiplier for stop loss buffer in pullback trades
+        /// Controls distance of stop loss below/above pullback zone
+        /// Higher values provide more room but larger potential losses
+        /// Typical range: 0.1-1.0
+        /// </summary>
+        [Parameter("PB ATR Buffer X", Group="Pullback Entry Parameters", DefaultValue = 0.25, MinValue = 0.0)]
+        public double PbAtrBufX { get; set; }
+
+        /// <summary>
+        /// Backstep parameter for swing detection (fractal width)
+        /// Number of bars on each side required to confirm a swing point
+        /// Higher values find more significant swings but may miss shorter-term moves
+        /// Valid range: 2-10 bars
+        /// </summary>
+        [Parameter("PB Swing Backstep", Group="Pullback Entry Parameters", DefaultValue = 3, MinValue = 2, MaxValue = 10)]
+        public int PbBack { get; set; }
+
+        /// <summary>
+        /// Maximum lookback period for finding swing points
+        /// Limits how far back to search for relevant swing highs/lows
+        /// Higher values find older swings, lower values focus on recent structure
+        /// Valid range: 50-1000 bars
+        /// </summary>
+        [Parameter("PB Lookback Bars", Group="Pullback Entry Parameters", DefaultValue = 400, MinValue = 50)]
+        public int PbLook { get; set; }
+
+        /// <summary>
+        /// Require EMA slope confirmation for pullback entries
+        /// When enabled, pullback entries need trend confirmation from EMA direction
+        /// Helps filter against-trend pullback trades
+        /// </summary>
+        [Parameter("PB Need EMA Slope", Group="Pullback Entry Parameters", DefaultValue = true)]
+        public bool PbNeedEmaSlope { get; set; }
+
+        /// <summary>
+        /// Minimum physics velocity required for pullback consideration
+        /// Helps ensure sufficient momentum exists before pullback entry
+        /// Lower values allow entries with less momentum
+        /// Typical range: 0.0-0.01
+        /// </summary>
+        [Parameter("PB Min v", Group="Pullback Entry Parameters", DefaultValue = 0.0)]
+        public double PbMinV { get; set; }
+
+        /// <summary>
+        /// Automatically adjust Fibonacci zone width based on market velocity
+        /// When enabled, adapts pullback zones to current market conditions
+        /// Higher velocity markets get tighter zones, lower velocity get wider zones
+        /// </summary>
+        [Parameter("PB Auto Width", Group="Pullback Entry Parameters", DefaultValue = true)]
+        public bool PbAutoWidth { get; set; }
+
+        /// <summary>
+        /// Minimum ATR value in pips to prevent division by zero and ensure meaningful ranges
+        /// Sets a floor for ATR calculations in pullback analysis
+        /// Valid range: 1+ pips
+        /// </summary>
+        [Parameter("PB ATR Floor (pips)", Group="Pullback Entry Parameters", DefaultValue = 6.0, MinValue = 0)]
+        public double PbAtrFloorPips { get; set; }
+
+        /// <summary>
+        /// Maximum ATR multiplier cap to prevent excessive ranges
+        /// Limits pullback calculations during extremely volatile periods
+        /// Valid range: 0.8-3.0
+        /// </summary>
+        [Parameter("PB ATR Cap x", Group="Pullback Entry Parameters", DefaultValue = 1.20, MinValue = 0.8, MaxValue = 3)]
+        public double PbAtrCapX { get; set; }
+
+        /// <summary>
+        /// Require micro-confirmation (break of recent high/low) for pullback entries
+        /// When enabled, waits for small breakout confirmation before entry
+        /// Helps reduce false signals but may delay entries
+        /// </summary>
+        [Parameter("PB Micro-Confirm", Group="Pullback Entry Parameters", DefaultValue = false)]
+        public bool PbMicroConfirm { get; set; }
+
+        /// <summary>
+        /// Tolerance in pips for pullback zone boundaries
+        /// Allows some flexibility in exact retracement level matching
+        /// Higher values are more permissive but may reduce signal quality
+        /// Valid range: 0+ pips
+        /// </summary>
+        [Parameter("PB Zone Tol (pips)", Group="Pullback Entry Parameters", DefaultValue = 2.0, MinValue=0)]
+        public double PbZoneTolPips { get; set; }
+
+        /// <summary>
+        /// Number of bars to look back for pullback confirmation signals
+        /// Controls the timeframe for validating pullback entry conditions
+        /// Valid range: 1-5 bars
+        /// </summary>
+        [Parameter("PB Confirm Lookback", Group="Pullback Entry Parameters", DefaultValue = 2, MinValue=1, MaxValue=5)]
+        public int PbConfirmLookback { get; set; }
+
+        /// <summary>
+        /// Maximum number of bars a pullback "armed" state can persist
+        /// After being armed, entry must occur within this timeframe
+        /// Valid range: 1-20 bars
+        /// </summary>
+        [Parameter("PB Arm Bars", Group="Pullback Entry Parameters", DefaultValue = 10, MinValue=1, MaxValue=20)]
+        public int PbArmBars { get; set; }
+
+        /// <summary>
+        /// Use relaxed EMA slope requirements for pullback validation
+        /// When enabled, reduces strictness of trend confirmation requirements
+        /// Allows more pullback opportunities but may reduce quality
+        /// </summary>
+        [Parameter("PB Relax EMA Slope", Group="Pullback Entry Parameters", DefaultValue = true)]
+        public bool PbRelaxEmaSlope { get; set; }
+
+        /// <summary>
+        /// Minimum velocity ratio (|velocity|/ATR) required for pullback entries
+        /// Ensures sufficient momentum relative to current volatility
+        /// Lower values allow entries with less relative momentum
+        /// Typical range: 0.2-1.0
+        /// </summary>
+        [Parameter("PB Min vr (|v|/ATR)", Group="Pullback Entry Parameters", DefaultValue = 0.45, MinValue=0)]
+        public double PbMinVr { get; set; }
+
+        #endregion
+
+        #region Kalman Filter Parameters
+        
+        /// <summary>
+        /// Enable Kalman filter for noise reduction in physics calculations
+        /// When enabled, applies advanced filtering to smooth price and velocity estimates
+        /// Helps reduce noise while preserving signal integrity
+        /// </summary>
+        [Parameter("Use Kalman", Group = "Kalman Filter Parameters", DefaultValue = true)]
+        public bool UseKalman { get; set; }
+
+        /// <summary>
+        /// Process noise covariance (Q matrix base value)
+        /// Controls how much the filter trusts the physics model vs observations
+        /// Higher values make filter more responsive to model predictions
+        /// Typical range: 1e-8 to 1e-4
+        /// </summary>
+        [Parameter("Q base", Group = "Kalman Filter Parameters", DefaultValue = 1e-6)]
+        public double KalmanQ { get; set; }
+
+        /// <summary>
+        /// Observation noise covariance (R matrix base value)
+        /// Controls how much the filter trusts price observations vs model
+        /// Higher values make filter rely more on model, less on observations
+        /// Typical range: 1e-8 to 1e-4
+        /// </summary>
+        [Parameter("R base", Group = "Kalman Filter Parameters", DefaultValue = 1e-6)]
+        public double KalmanR { get; set; }
+
+        #endregion
+
+        #region Gap Protection Parameters
+        
+        /// <summary>
+        /// ATR multiplier for gap detection threshold
+        /// Price gaps larger than this multiple of ATR trigger gap protection
+        /// Higher values make gap detection less sensitive
+        /// Typical range: 1.0-3.0
+        /// </summary>
+        [Parameter("Gap K (×ATR)", Group = "Gap Protection Parameters", DefaultValue = 1.5)]
+        public double GapK { get; set; }
+
+        /// <summary>
+        /// Number of bars to wait after gap detection before resuming trading
+        /// Provides cooldown period after market gaps to avoid volatile conditions
+        /// Set to 0 to disable gap-based cooldown
+        /// Valid range: 0+ bars
+        /// </summary>
+        [Parameter("Gap Cooldown Bars", Group = "Gap Protection Parameters", DefaultValue = 0, MinValue = 0)]
+        public int GapCooldownBars { get; set; }
+
+        #endregion
+
+        #region ZigZag and Exit Strategy Parameters
+        
+        /// <summary>
+        /// Enable ZigZag-based exit management for open positions
+        /// When enabled, adjusts stop losses based on swing point analysis
+        /// Helps capture more profit by trailing stops at key levels
+        /// </summary>
+        [Parameter("Use ZigZag Escape", Group = "ZigZag and Exit Strategy", DefaultValue = true)]
+        public bool UseZigZagEscape { get; set; }
+
+        /// <summary>
+        /// Backstep parameter for ZigZag swing detection
+        /// Number of bars on each side required to confirm a ZigZag pivot
+        /// Higher values find more significant swings but may be less responsive
+        /// Valid range: 1+ bars
+        /// </summary>
+        [Parameter("ZZ BackStep", Group = "ZigZag and Exit Strategy", DefaultValue = 3, MinValue = 1)]
+        public int ZzBackStep { get; set; }
+
+        /// <summary>
+        /// ATR multiplier for ZigZag stop loss buffer
+        /// Distance beyond swing points where stops are placed
+        /// Higher values provide more room but larger potential losses
+        /// Typical range: 0.0-2.0
+        /// </summary>
+        [Parameter("ZZ Buffer ATR×", Group = "ZigZag and Exit Strategy", DefaultValue = 0.0)]
+        public double ZzBufferAtrX { get; set; }
+
+        /// <summary>
+        /// Fixed pip buffer beyond ZigZag pivot points for stop placement
+        /// Additional safety margin beyond swing highs/lows
+        /// Valid range: 0+ pips
+        /// </summary>
+        [Parameter("ZZ Buffer Pips", Group = "ZigZag and Exit Strategy", DefaultValue = 2)]
+        public int ZzBufferPips { get; set; }
+
+        /// <summary>
+        /// ATR multiplier for ZigZag breakout detection buffer
+        /// Determines how far price must move beyond swing points for valid breakout
+        /// Higher values require stronger breakouts but reduce false signals
+        /// Typical range: 0.2-1.0
+        /// </summary>
+        [Parameter("ZZ Break Buffer (ATR×)", Group = "ZigZag and Exit Strategy", DefaultValue = 0.4)]
+        public double ZzBreakAtrX { get; set; }
+
+        /// <summary>
+        /// Fixed pip buffer for ZigZag breakout detection
+        /// Minimum distance beyond swing points required for breakout confirmation
+        /// Works in conjunction with ATR-based buffer
+        /// Valid range: 0+ pips
+        /// </summary>
+        [Parameter("ZZ Break Buffer (pips)", Group = "ZigZag and Exit Strategy", DefaultValue = 2.0)]
+        public double ZzBreakPips { get; set; }
+
+        /// <summary>
+        /// Display ZigZag lines and swing points on chart for visual analysis
+        /// Helps with manual analysis and strategy validation
+        /// </summary>
+        [Parameter("Show ZigZag on Chart", Group="ZigZag and Exit Strategy", DefaultValue = true)]
+        public bool ShowZigZagOnChart { get; set; }
+
+        /// <summary>
+        /// Enable ZigZag breakout entries as trade triggers
+        /// When enabled, breakouts beyond swing points can trigger new positions
+        /// When disabled, only uses ZigZag for exit management
+        /// </summary>
+        [Parameter("Use ZZ Break Entries", Group="ZigZag and Exit Strategy", DefaultValue = true)]
+        public bool UseZzBreakEntries { get; set; }
+
+        #endregion
+
+        #region Trailing Stop Parameters
+        
+        /// <summary>
+        /// ATR multiplier for trailing stop distance calculation
+        /// Controls how close trailing stops follow price movement
+        /// Higher values provide more room but larger potential losses
+        /// Typical range: 0.8-3.0
+        /// </summary>
+        [Parameter("Trail ATR x", Group="Trailing Stop Parameters", DefaultValue = 1.5)]
         public double TrailAtrMult { get; set; }
 
-        [Parameter("Min trail step (pips)", Group="Trail", DefaultValue = 1.0)]
+        /// <summary>
+        /// Minimum step size in pips for trailing stop updates
+        /// Prevents excessive minor stop loss modifications
+        /// Helps reduce broker commissions and API calls
+        /// Valid range: 0.1+ pips
+        /// </summary>
+        [Parameter("Min trail step (pips)", Group="Trailing Stop Parameters", DefaultValue = 1.0)]
         public double MinTrailStepPips { get; set; }
 
-        // ===== State =====
+        #endregion
+
+        #region Debug and Diagnostic Parameters
+        
+        /// <summary>
+        /// Enable verbose logging for detailed trade analysis and debugging
+        /// When enabled, outputs comprehensive information about trade decisions
+        /// Useful for strategy analysis but may impact performance
+        /// </summary>
+        [Parameter("Verbose Audit", Group = "Debug and Diagnostic", DefaultValue = true)]
+        public bool Verbose { get; set; }
+
+        /// <summary>
+        /// Frequency of diagnostic output in number of bars
+        /// Controls how often detailed diagnostic information is logged
+        /// Higher values reduce log volume but provide less frequent updates
+        /// Valid range: 1-50 bars
+        /// </summary>
+        [Parameter("Audit Every N Bars", Group = "Debug and Diagnostic", DefaultValue = 1, MinValue = 1, MaxValue = 50)]
+        public int AuditEveryN { get; set; }
+
+        /// <summary>
+        /// Enable visualization and diagnostic charts
+        /// When enabled, creates visual elements for strategy analysis
+        /// Helps with manual review and strategy optimization
+        /// </summary>
+        [Parameter("Debug Viz", Group = "Debug and Diagnostic", DefaultValue = true)]
+        public bool DebugViz { get; set; }
+
+        /// <summary>
+        /// Draw robot analysis lines and markers on chart
+        /// When enabled, displays swing points, breakout levels, and entry signals
+        /// Useful for visual strategy validation but may clutter chart
+        /// </summary>
+        [Parameter("Draw Robot Lines", Group = "Debug and Diagnostic", DefaultValue = false)]
+        public bool DrawRobotLines { get; set; }
+
+        /// <summary>
+        /// Alternative label for trade identification (legacy parameter)
+        /// Used for backward compatibility with older versions
+        /// </summary>
+        [Parameter("Label", Group = "Debug and Diagnostic", DefaultValue = "Sindan")] 
+        public string Label { get; set; }
+
+        #endregion
+
+        #region Technical Indicators and State Variables
+        
+        /// <summary>Average True Range indicator for volatility measurement</summary>
         private AverageTrueRange _atr;
-        private ExponentialMovingAverage _ema;        private DateTime _lastTrade = DateTime.MinValue;
+        
+        /// <summary>Exponential Moving Average for trend analysis</summary>
+        private ExponentialMovingAverage _ema;
+        
+        /// <summary>Average True Range indicator for energy gate calculations</summary>
+        private AverageTrueRange _atrEng;
+
+        #endregion
+
+        #region Trading State Variables
+        
+        /// <summary>Timestamp of the last trade execution</summary>
+        private DateTime _lastTrade = DateTime.MinValue;
+        
+        /// <summary>Current logical trading day for daily resets</summary>
         private DateTime _day = DateTime.MinValue;
-        private volatile bool  _timerBusy = false;
-        private DateTime _lastTimerTs = DateTime.MinValue;
-
+        
+        /// <summary>Number of trades executed today</summary>
         private int _tradesToday;
-        private int _gapCooldown;
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        // ===== Helpers =====
-        private static bool IsFinite(double x) => !(double.IsNaN(x) || double.IsInfinity(x));
-        private static double Sqr(double x) => x * x;
-
-        // physical state
-        private double _x, _v, _a;
-        private double _Eprev;
-
-        // Energy (Etot) と その増分（dE）
-        private double Etot = 0.0;
-        private double dE   = 0.0;
-
+        
+        /// <summary>Bar number when last trade was placed (for cooldown)</summary>
         private int lastTradeBar = int.MinValue / 2;
-        // --- Pullback arming state ---
+        
+        /// <summary>Indicates if robot is suspended (e.g., after Friday flat)</summary>
+        private bool _suspended = false;
+        
+        /// <summary>Last Friday when flat was enforced</summary>
+        private DateTime _lastFridayFlat = DateTime.MinValue;
+        
+        /// <summary>Gap-based cooldown remaining bars</summary>
+        private int _gapCooldown;
+
+        #endregion
+
+        #region Physics State Variables
+        
+        /// <summary>Current position in physics simulation</summary>
+        private double _x;
+        
+        /// <summary>Current velocity in physics simulation</summary>
+        private double _v;
+        
+        /// <summary>Current acceleration in physics simulation</summary>
+        private double _a;
+        
+        /// <summary>Previous energy level for delta calculations</summary>
+        private double _Eprev;
+        
+        /// <summary>Total energy (Etot) calculation</summary>
+        private double Etot = 0.0;
+        
+        /// <summary>Energy change (dE) between calculations</summary>
+        private double dE = 0.0;
+
+        #endregion
+
+        #region Analysis State Variables
+        
+        /// <summary>Indicates if physics calculations are ready and valid</summary>
+        private bool _physicsReady;
+        
+        /// <summary>Last bar index for which physics was computed</summary>
+        private int _lastComputedBar = -1;
+        
+        /// <summary>Cached highest high value from computation</summary>
+        private double _hhC;
+        
+        /// <summary>Cached lowest low value from computation</summary>
+        private double _llC;
+        
+        /// <summary>Cached midpoint value from computation</summary>
+        private double _midC;
+        
+        /// <summary>Cached EMA value from computation</summary>
+        private double _emaC;
+        
+        /// <summary>Cached ATR value from computation</summary>
+        private double _atrC;
+        
+        /// <summary>Cached band difference from computation</summary>
+        private double _bandDiffC;
+
+        #endregion
+
+        #region Kalman Filter State
+        
+        /// <summary>Kalman filter covariance matrix element P[0,0]</summary>
+        private double _P00;
+        
+        /// <summary>Kalman filter covariance matrix element P[0,1]</summary>
+        private double _P01;
+        
+        /// <summary>Kalman filter covariance matrix element P[1,0]</summary>
+        private double _P10;
+        
+        /// <summary>Kalman filter covariance matrix element P[1,1]</summary>
+        private double _P11;
+
+        #endregion
+
+        #region Pullback State Variables
+        
+        /// <summary>Bar index when long pullback was armed</summary>
         private int _armLongBar = -9999;
+        
+        /// <summary>Bar index when short pullback was armed</summary>
         private int _armShortBar = -9999;
+        
+        /// <summary>Stop loss price for armed long pullback</summary>
         private double _armLongSL = double.NaN;
+        
+        /// <summary>Stop loss price for armed short pullback</summary>
         private double _armShortSL = double.NaN;
 
-        // fields
-        private string _zzWhyB = "";
-        private string _zzWhyS = "";
-        // Kalman covariance
-        private double _P00, _P01, _P10, _P11;
+        #endregion
 
-        private readonly Random _rng = new Random();
-
-        // cache
-        private bool _physicsReady;
-        private int _lastComputedBar = -1;
-        private double _hhC, _llC, _midC, _emaC, _atrC, _bandDiffC;
-
-        private string _label;
-        private bool _suspended =false;
-        private DateTime _lastFridayFlat = DateTime.MinValue;   // 同じ金曜で多重実行しないため
+        #region Trade Management State
         
-        // When a pullback entry is triggered it may compute an explicit stop
-        // price based on the swing structure. Store that here so that
-        // PlaceTrade can override the default ATR-based stop. NaN means no
-        // override is pending.
+        /// <summary>Pending stop loss override price</summary>
         private double _initialSLOverride = double.NaN;
-        // TP倍率の一時上書き（NaN=未指定）
+        
+        /// <summary>Pending take profit ratio override</summary>
         private double _rMultipleOverride = double.NaN;
+        
+        /// <summary>Current label for trade identification</summary>
+        private string _label;
 
+        #endregion
+
+        #region Utility Variables
+        
+        /// <summary>Timer busy flag to prevent overlapping executions</summary>
+        private volatile bool _timerBusy = false;
+        
+        /// <summary>Timestamp of last timer execution</summary>
+        private DateTime _lastTimerTs = DateTime.MinValue;
+        
+        /// <summary>Random number generator for noise injection</summary>
+        private readonly Random _rng = new Random();
+        
+        /// <summary>Next diagnostic output timestamp</summary>
+        private DateTime _nextDiag = DateTime.MinValue;
+        
+        /// <summary>ZigZag buy signal reason</summary>
+        private string _zzWhyB = "";
+        
+        /// <summary>ZigZag sell signal reason</summary>
+        private string _zzWhyS = "";
+
+        #endregion
+
+        #region Helper Methods and Utilities
+
+        /// <summary>
+        /// Checks if a double value is finite (not NaN or Infinity)
+        /// </summary>
+        /// <param name="x">Value to check</param>
+        /// <returns>True if value is finite</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsFinite(double x) => !(double.IsNaN(x) || double.IsInfinity(x));
+        
+        /// <summary>
+        /// Calculates the square of a number
+        /// </summary>
+        /// <param name="x">Value to square</param>
+        /// <returns>x squared</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double Sqr(double x) => x * x;
+
+        /// <summary>
+        /// Rounds price down to the nearest tick size
+        /// </summary>
+        /// <param name="price">Price to round</param>
+        /// <returns>Price rounded down to tick boundary</returns>
         private double ToTickDown(double price)
-         => Math.Floor(price / Symbol.TickSize)  * Symbol.TickSize; // 価格を下方向へ
-        private double ToTickUp  (double price)
-         => Math.Ceiling(price / Symbol.TickSize) * Symbol.TickSize; // 価格を上方向へ
+         => Math.Floor(price / Symbol.TickSize)  * Symbol.TickSize;
+         
+        /// <summary>
+        /// Rounds price up to the nearest tick size
+        /// </summary>
+        /// <param name="price">Price to round</param>
+        /// <returns>Price rounded up to tick boundary</returns>
+        private double ToTickUp(double price)
+         => Math.Ceiling(price / Symbol.TickSize) * Symbol.TickSize;
       
         // 論理的な“日”＝（Server.Time を DailyResetHour 時間だけ巻き戻した日付）
         // 例: DailyResetHour=0 なら通常のカレンダー日（サーバ日付）
@@ -473,95 +1148,112 @@ private bool MicroConfirmShort() {
     if (HasOpen(label, side)) return false;
     // SpreadTooWide() が SpreadMaxPips を見ているので二重条件は不要
     if (SpreadTooWide()) return false;
-    return true;
-}
+            #endregion
 
-         protected override void OnStart()
-    {
-         // --- 初期化 ---
-         _label = LabelPrefix;
-         _atr = Indicators.AverageTrueRange(Bars, AtrPeriod, MovingAverageType.Exponential); // ←実際の型に合わせて
-         _ema = Indicators.ExponentialMovingAverage(Bars.ClosePrices, EmaPeriod);            // 例         //物理モデルの初期値
-         _day   = LogicalDay(Server.Time);
-         _x     = Bars.ClosePrices.LastValue;
-         _v     = 0.0;
-         _a     = 0.0;
-         _Eprev = 0.0;
-         _P00   = 1e-8; _P01 = 0; _P10 = 0; _P11 = 1e-8;
-         _atrEng = Indicators.AverageTrueRange(EngAtrPeriod, MovingAverageType.Exponential);
-         _zzWhyB = ""; _zzWhyS = "";
-         {
-             _suspended = false;
-             _lastFridayFlat = DateTime.MinValue;
-         }
-             // Reset computation state
+        #region Robot Lifecycle Methods
+
+        /// <summary>
+        /// Robot initialization method called when the robot starts
+        /// Initializes all indicators, state variables, and trading parameters
+        /// Sets up physics engine, Kalman filter, and timer-based processing
+        /// </summary>
+        protected override void OnStart()
+        {
+            // Initialize trading label and indicators
+            _label = LabelPrefix;
+            _atr = Indicators.AverageTrueRange(Bars, AtrPeriod, MovingAverageType.Exponential);
+            _ema = Indicators.ExponentialMovingAverage(Bars.ClosePrices, EmaPeriod);
+            _atrEng = Indicators.AverageTrueRange(EngAtrPeriod, MovingAverageType.Exponential);
+            
+            // Initialize physics engine state
+            _day = LogicalDay(Server.Time);
+            _x = Bars.ClosePrices.LastValue;
+            _v = 0.0;
+            _a = 0.0;
+            _Eprev = 0.0;
+            
+            // Initialize Kalman filter covariance matrix
+            _P00 = 1e-8; _P01 = 0; _P10 = 0; _P11 = 1e-8;
+            
+            // Initialize signal tracking
+            _zzWhyB = ""; _zzWhyS = "";
+            
+            // Initialize trading state
+            _suspended = false;
+            _lastFridayFlat = DateTime.MinValue;
             _physicsReady = false;
             _lastComputedBar = -1;
-
-            // Initialize trade counters
             _lastTrade = DateTime.MinValue;
             _tradesToday = 0;
-         ClearRobotLines();   // 起動時に残骸を消す
-         if (UseTimerCompute)
-         Timer.Start(TimeSpan.FromMilliseconds(TimerIntervalMs)); // 例: 250〜500ms
-         _timerBusy = false;
-         //（任意）取引所の最小/最大を確認
-         if (Verbose)
+            _timerBusy = false;
+            
+            // Clean up any existing chart objects
+            ClearRobotLines();
+            
+            // Start timer-based processing if enabled
+            if (UseTimerCompute)
+                Timer.Start(TimeSpan.FromMilliseconds(TimerIntervalMs));
+            
+            // Log initialization information
+            if (Verbose)
                 Print("[AUDIT] START {0} TF={1} Tick={2}", SymbolName, Bars.TimeFrame, Symbol.TickSize);
-         Print("VolInUnits Min={0}, Step={1}, Max={2}",
-          Symbol.VolumeInUnitsMin, Symbol.VolumeInUnitsStep, Symbol.VolumeInUnitsMax);
-    }
-
-         private DateTime _nextDiag  = DateTime.MinValue;
-            protected override void OnStop()
-       {
-
-            if (UseTimerCompute)Timer.Stop();
+            Print("VolInUnits Min={0}, Step={1}, Max={2}",
+                Symbol.VolumeInUnitsMin, Symbol.VolumeInUnitsStep, Symbol.VolumeInUnitsMax);
         }
 
-       protected override void OnTimer()
-   {
+        /// <summary>
+        /// Robot cleanup method called when the robot stops
+        /// Ensures proper cleanup of timer resources
+        /// </summary>
+        protected override void OnStop()
+        {
+            if (UseTimerCompute)
+                Timer.Stop();
+        }
+
+        /// <summary>
+        /// Timer-based processing method for continuous market analysis
+        /// Performs physics calculations, trade management, and position monitoring
+        /// Runs at intervals specified by TimerIntervalMs parameter
+        /// </summary>
+        protected override void OnTimer()
+        {
+            // Perform daily maintenance tasks
             RollDailyIfNeeded();
             EnforceFridayFlat();
+            
             if (!UseTimerCompute) return;
-            // prevent overlapping timer executions
+            
+            // Prevent overlapping timer executions
             if (_timerBusy) return;
 
-            // respect the CalcEverySec spacing – skip if the timer was run recently
-            // Respect CalcEverySec spacing only when CalcEverySec > 0. If CalcEverySec
-            // is zero the timer will run on every invocation of OnTimer (subject
-            // to TimerIntervalMs). This prevents CalcEverySec=0 from forcing a
-            // minimum 1 second delay via Math.Max(1, CalcEverySec).
+            // Respect calculation frequency limits
             if (CalcEverySec > 0 && _lastTimerTs != DateTime.MinValue)
             {
                 var span = Server.Time - _lastTimerTs;
                 if (span.TotalSeconds < Math.Max(1, CalcEverySec))
                     return;
             }
-            // mark last timer call
+            
             _lastTimerTs = Server.Time;
-
             _timerBusy = true;
+            
             try
             {
-                // Input guard: ensure ATR and price are valid and finite
+                // Validate input data
                 double atrVal = _atr.Result.LastValue;
-                double pxVal  = Bars.ClosePrices.LastValue;
+                double pxVal = Bars.ClosePrices.LastValue;
                 if (atrVal <= 0 || double.IsNaN(atrVal) || double.IsInfinity(atrVal) ||
                     double.IsNaN(pxVal) || double.IsInfinity(pxVal))
                 {
-                    // Skip computation on invalid inputs
-                    return;
+                    return; // Skip computation on invalid inputs
                 }
 
-                // If this bar hasn't been computed yet, perform the heavy physics calculation.
-                // ComputePhysicsAndCache returns true only when the computation succeeded and
-                // internal state (including _lastComputedBar and _physicsReady) is updated.
+                // Perform physics computation if needed
                 if (_lastComputedBar != Bars.Count - 1)
                 {
                     bool ok = ComputePhysicsAndCache();
-                    if (!ok)
-                    {return;}
+                    if (!ok) return;
                 }
             }
             catch (Exception ex)
@@ -571,8 +1263,7 @@ private bool MicroConfirmShort() {
             }
             finally
             {
-                // always release the busy flag
-                _timerBusy = false;
+                _timerBusy = false; // Always release the busy flag
             }
         }
         private void ClearRobotLines()
