@@ -722,104 +722,124 @@ private bool MicroConfirmShort() {
     // SpreadTooWide() が SpreadMaxPips を見ているので二重条件は不要
     if (SpreadTooWide()) return false;
     return true;
-}
-
-         protected override void OnStart()
-    {
-         // --- 初期化 ---
-         _label = LabelPrefix;
-         _atr = Indicators.AverageTrueRange(Bars, AtrPeriod, MovingAverageType.Exponential); // ←実際の型に合わせて
-         _ema = Indicators.ExponentialMovingAverage(Bars.ClosePrices, EmaPeriod);            // 例         //物理モデルの初期値
-         _day   = LogicalDay(Server.Time);
-         _x     = Bars.ClosePrices.LastValue;
-         _v     = 0.0;
-         _a     = 0.0;
-         _Eprev = 0.0;
-         _P00   = 1e-8; _P01 = 0; _P10 = 0; _P11 = 1e-8;
-         _atrEng = Indicators.AverageTrueRange(EngAtrPeriod, MovingAverageType.Exponential);
-         _zzWhyB = ""; _zzWhyS = "";
-         {
-             _suspended = false;
-             _lastFridayFlat = DateTime.MinValue;
-         }
-             // Reset computation state
-            _physicsReady = false;
-            _lastComputedBar = -1;
-
-            // Initialize trade counters
-            _lastTrade = DateTime.MinValue;
-            _tradesToday = 0;
-         ClearRobotLines();   // 起動時に残骸を消す
-         if (UseTimerCompute)
-         Timer.Start(TimeSpan.FromMilliseconds(TimerIntervalMs)); // 例: 250〜500ms
-         _timerBusy = false;
-         //（任意）取引所の最小/最大を確認
-         if (Verbose)
-                Print("[AUDIT] START {0} TF={1} Tick={2}", SymbolName, Bars.TimeFrame, Symbol.TickSize);
-         Print("VolInUnits Min={0}, Step={1}, Max={2}",
-          Symbol.VolumeInUnitsMin, Symbol.VolumeInUnitsStep, Symbol.VolumeInUnitsMax);
-    }
-
-         private DateTime _nextDiag  = DateTime.MinValue;
-            protected override void OnStop()
-       {
-
-            if (UseTimerCompute)Timer.Stop();
         }
 
-       protected override void OnTimer()
-   {
+        #endregion
+
+        #region === Robot Lifecycle Methods ===
+
+        /// <summary>
+        /// Robot initialization - sets up indicators, physics state, and trading parameters
+        /// </summary>
+        protected override void OnStart()
+        {
+            // Initialize core components
+            _label = LabelPrefix;
+            _atr = Indicators.AverageTrueRange(Bars, AtrPeriod, MovingAverageType.Exponential);
+            _ema = Indicators.ExponentialMovingAverage(Bars.ClosePrices, EmaPeriod);
+            _atrEng = Indicators.AverageTrueRange(EngAtrPeriod, MovingAverageType.Exponential);
+            
+            // Initialize time management
+            _day = LogicalDay(Server.Time);
+            _lastTrade = DateTime.MinValue;
+            _lastFridayFlat = DateTime.MinValue;
+            
+            // Initialize physics state
+            _x = Bars.ClosePrices.LastValue;
+            _v = 0.0;
+            _a = 0.0;
+            _Eprev = 0.0;
+            
+            // Initialize Kalman filter
+            _P00 = 1e-8; _P01 = 0; _P10 = 0; _P11 = 1e-8;
+            
+            // Initialize analysis state
+            _zzWhyB = ""; _zzWhyS = "";
+            _physicsReady = false;
+            _lastComputedBar = -1;
+            
+            // Initialize trading state
+            _tradesToday = 0;
+            _suspended = false;
+            _timerBusy = false;
+            
+            // Clear any existing chart objects
+            ClearRobotLines();
+            
+            // Start timer if enabled
+            if (UseTimerCompute)
+                Timer.Start(TimeSpan.FromMilliseconds(TimerIntervalMs));
+            
+            // Log startup information
+            if (Verbose)
+            {
+                Print("[AUDIT] START {0} TF={1} Tick={2}", SymbolName, Bars.TimeFrame, Symbol.TickSize);
+                Print("VolInUnits Min={0}, Step={1}, Max={2}",
+                      Symbol.VolumeInUnitsMin, Symbol.VolumeInUnitsStep, Symbol.VolumeInUnitsMax);
+            }
+        }
+
+        /// <summary>
+        /// Robot shutdown - cleanup resources
+        /// </summary>
+        protected override void OnStop()
+        {
+            if (UseTimerCompute)
+                Timer.Stop();
+        }
+
+        
+        /// <summary>
+        /// Timer-based computation handler for physics calculations and market analysis
+        /// </summary>
+        protected override void OnTimer()
+        {
+            // Handle daily resets and Friday flat enforcement
             RollDailyIfNeeded();
             EnforceFridayFlat();
+            
             if (!UseTimerCompute) return;
-            // prevent overlapping timer executions
+            
+            // Prevent overlapping timer executions
             if (_timerBusy) return;
 
-            // respect the CalcEverySec spacing – skip if the timer was run recently
-            // Respect CalcEverySec spacing only when CalcEverySec > 0. If CalcEverySec
-            // is zero the timer will run on every invocation of OnTimer (subject
-            // to TimerIntervalMs). This prevents CalcEverySec=0 from forcing a
-            // minimum 1 second delay via Math.Max(1, CalcEverySec).
+            // Respect calculation frequency limits
             if (CalcEverySec > 0 && _lastTimerTs != DateTime.MinValue)
             {
                 var span = Server.Time - _lastTimerTs;
                 if (span.TotalSeconds < Math.Max(1, CalcEverySec))
                     return;
             }
-            // mark last timer call
+            
             _lastTimerTs = Server.Time;
-
             _timerBusy = true;
+            
             try
             {
-                // Input guard: ensure ATR and price are valid and finite
+                // Validate input data
                 double atrVal = _atr.Result.LastValue;
-                double pxVal  = Bars.ClosePrices.LastValue;
+                double pxVal = Bars.ClosePrices.LastValue;
+                
                 if (atrVal <= 0 || double.IsNaN(atrVal) || double.IsInfinity(atrVal) ||
                     double.IsNaN(pxVal) || double.IsInfinity(pxVal))
                 {
-                    // Skip computation on invalid inputs
-                    return;
+                    return; // Skip computation on invalid inputs
                 }
 
-                // If this bar hasn't been computed yet, perform the heavy physics calculation.
-                // ComputePhysicsAndCache returns true only when the computation succeeded and
-                // internal state (including _lastComputedBar and _physicsReady) is updated.
+                // Perform physics computation if needed
                 if (_lastComputedBar != Bars.Count - 1)
                 {
                     bool ok = ComputePhysicsAndCache();
-                    if (!ok)
-                    {return;}
+                    if (!ok) return;
                 }
             }
             catch (Exception ex)
             {
                 if (Verbose)
-                    Print("[TIMER] crash: {0}", ex.Message);
+                    Print("[TIMER] Error: {0}", ex.Message);
             }
             finally
             {
-                // always release the busy flag
                 _timerBusy = false;
             }
         }
