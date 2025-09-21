@@ -788,13 +788,13 @@ else // trigSell
         if (CooldownBars > 0 && curBar - lastTradeBar < CooldownBars)
         { REJ("COOL", $"wait {CooldownBars - (curBar - lastTradeBar)} bars"); return; }
 
-        // 1) スプレッド
-        if (SpreadMaxPips > 0 && spreadPips > SpreadMaxPips)
-        { REJ("SPREAD", $"{spreadPips:F2}p > {SpreadMaxPips:F2}p"); return; }
+        // 1) スプレッド - use relaxed check consistent with SpreadTooWide
+        if (SpreadMaxPips > 0 && spreadPips > SpreadMaxPips * 1.2)
+        { REJ("SPREAD", $"{spreadPips:F2}p > {SpreadMaxPips * 1.2:F2}p"); return; }
 
         // 2) ストップ距離
         double stopPips = Math.Abs((slPrice - entry)) / Symbol.PipSize;
-        double autoMin = Math.Max(5.0, 1.5 * spreadPips);
+        double autoMin = Math.Max(4.0, 1.2 * spreadPips);
         double stopMin = (StopPipsMin > 0.0) ? StopPipsMin : autoMin;
         if (stopPips < stopMin)
         { REJ("STOP", $"stop {stopPips:F1}p < min {stopMin:F1}p"); return; }
@@ -1083,7 +1083,7 @@ private bool TryGetLastLegDown(out int iH1, out double H1, out int iL1, out doub
 
     double atr = SoftATR();
     double vr  = Math.Abs(_v) / Math.Max(1e-12, atr);
-    if (vr < PbMinVr) return false;
+    if (vr < PbMinVr * 0.8) return false;
 
     // 押し目帯（勢いで可変）＋許容誤差
     double range = H1 - L1;
@@ -1127,7 +1127,7 @@ private bool TryPullbackShortPhysics(out double sl, out string why)
 
     double atr = SoftATR();
     double vr  = Math.Abs(_v) / Math.Max(1e-12, atr);
-    if (vr < PbMinVr) return false;
+    if (vr < PbMinVr * 0.8) return false;
 
     double range = H1 - L1;
     var (fMin, fMax) = GetFibBand(vr);
