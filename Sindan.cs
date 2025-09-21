@@ -1351,6 +1351,23 @@ if (!double.IsNaN(_rMultipleOverride)) {
             slPips = Math.Max(slPips, minPips);
             tpPips = Math.Max(tpPips, minPips);
         }
+        
+            // 追加の SL/TP 妥当性チェック
+            double maxSlPips = 1000; // 最大1000pipsまでのSLを許可
+            double maxTpPips = 2000; // 最大2000pipsまでのTPを許可
+            if (slPips > maxSlPips)
+            {
+                if (Verbose) Print("[BLOCK] SL too wide: {0}p > {1}p", slPips, maxSlPips);
+                return;
+            }
+            if (tpPips > maxTpPips)
+            {
+                if (Verbose) Print("[BLOCK] TP too wide: {0}p > {1}p", tpPips, maxTpPips);
+                return;
+            }
+            
+            // SL/TP の最終確認ログ
+            if (Verbose) Print("[VALIDATE] SL: {0:F5} ({1}p), TP: {2:F5} ({3}p)", slPrice, slPips, tpPrice, tpPips);
             
             double volCalc = CalcPositionUnits(atr);
             //取引所制約でクランプ
@@ -1361,33 +1378,62 @@ if (!double.IsNaN(_rMultipleOverride)) {
             long volL = (long)Math.Round (volQ);
             if (volL <= 0){ if (Verbose) Print("[BLOCK]vol==0"); return;}
 
-            // …entry/slPrice/tpPrice/slPips/tpPips/volUnits を計算し終えた直後に置く
-long v = (long)Math.Round(vol);
-if (v <= 0) { Print("[ORDER SKIP] volume=0"); return; }
-
 if (double.IsNaN(entry) || double.IsNaN(slPrice) || double.IsNaN(tpPrice) ||
     double.IsInfinity(entry) || double.IsInfinity(slPrice) || double.IsInfinity(tpPrice))
 { Print("[ORDER SKIP] NaN/Inf entry={0} sl={1} tp={2}", entry, slPrice, tpPrice); return; }
 
 // ★ 発注直前ログ（ここが“発注直前”）
 Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp={7}",
-      SymbolName, side, v, slPips, tpPips, entry, slPrice, tpPrice);
+      SymbolName, side, volL, slPips, tpPips, entry, slPrice, tpPrice);
 
-             LogJson("order_pre", "\"side\":\"" + side + "\",\"v\":" + v +",\"entry\":" + entry.ToString("F5") +
+             LogJson("order_pre", "\"side\":\"" + side + "\",\"v\":" + volL +",\"entry\":" + entry.ToString("F5") +
        ",\"sl\":" + slPrice.ToString("F5") + ",\"tp\":" + tpPrice.ToString("F5") +",\"slPips\":" + slPips + ",\"tpPips\":" + tpPips);
             var res = ExecuteMarketOrder(side,SymbolName,(long)volL,_label,slPips,tpPips);
            
             if (!res.IsSuccessful)
             {
                 Print("[AUDIT] ORDER ERR {0}",res.Error);
-                LogJson("order_err", "\"err\":\"" + res.Error + "\"");
+                LogJson("order_err", "\"err\":\"" + (res.Error?.ToString() ?? "unknown") + "\"");
                 return;
             }
+            
+            // 注文成功をログ
+            if (Verbose) Print("[AUDIT] ORDER SUCCESS - Position ID: {0}, Entry: {1:F5}", res.Position.Id, res.Position.EntryPrice);
             // ★ 初期SL/TPの保険（未設定なら即付与）
             var pos = res.Position;
             if (!pos.StopLoss.HasValue || !pos.TakeProfit.HasValue)
-            { var fix = ModifyPosition(pos, slPrice, tpPrice, ProtectionType.None);
-              Print("[AUDIT] INIT SL/TP via ModifyPosition ok={0}", fix.IsSuccessful);}
+            { 
+                // ExecuteMarketOrderでSL/TPが設定されなかった場合の緊急フォールバック
+                var fix = ModifyPosition(pos, slPrice, tpPrice, ProtectionType.None);
+                if (Verbose) Print("[AUDIT] INIT SL/TP via ModifyPosition ok={0} (SL: {1:F5}, TP: {2:F5})", fix.IsSuccessful, slPrice, tpPrice);
+                
+                // ModifyPositionも失敗した場合はポジションを閉じて安全を確保
+                if (!fix.IsSuccessful) 
+                {
+                    Print("[CRITICAL] Failed to set SL/TP, closing position for safety: {0}", fix.Error);
+                    ClosePosition(pos);
+                    LogJson("sltp_critical_failure", "\"error\":\"" + (fix.Error?.ToString() ?? "unknown") + "\",\"action\":\"position_closed\"");
+                    return;
+                }
+            }
+            else 
+            {
+                // SL/TPが正常に設定されていることを確認・ログ
+                if (Verbose) Print("[AUDIT] SL/TP set successfully - SL: {0:F5}, TP: {1:F5}", pos.StopLoss.Value, pos.TakeProfit.Value);
+                
+                // SL/TPが期待値と大きく異なる場合は警告
+                double slDiff = Math.Abs(pos.StopLoss.Value - slPrice);
+                double tpDiff = Math.Abs(pos.TakeProfit.Value - tpPrice);
+                double tolerance = 2.0 * Symbol.PipSize; // 2pipsの許容誤差
+                
+                if (slDiff > tolerance)
+                    Print("[WARNING] SL set value differs from expected: set={0:F5}, expected={1:F5}, diff={2:F1}p", 
+                          pos.StopLoss.Value, slPrice, slDiff / Symbol.PipSize);
+                          
+                if (tpDiff > tolerance)
+                    Print("[WARNING] TP set value differs from expected: set={0:F5}, expected={1:F5}, diff={2:F1}p", 
+                          pos.TakeProfit.Value, tpPrice, tpDiff / Symbol.PipSize);
+            }
 
             if (MaxMarketRangePips > 0)
         {
@@ -1547,9 +1593,27 @@ Print("[ORDER PRE] {0} side={1} v={2} slPips={3} tpPips={4} entry={5} sl={6} tp=
             // priceA と priceB の距離を pips に変換（最低1pip、NaN対策つき）
         private int ToPips(double priceA, double priceB)
     {
+            // 追加の入力値検証
+            if (double.IsNaN(priceA) || double.IsInfinity(priceA) || 
+                double.IsNaN(priceB) || double.IsInfinity(priceB) ||
+                Symbol.PipSize <= 0 || double.IsNaN(Symbol.PipSize))
+            {
+                if (Verbose) Print("[WARNING] ToPips called with invalid inputs: A={0}, B={1}, PipSize={2}", priceA, priceB, Symbol.PipSize);
+                return 1;
+            }
+            
             double d = Math.Abs(priceA - priceB) / Symbol.PipSize;
-            if (double.IsNaN(d) || double.IsInfinity(d)) return 1;
-            return Math.Max(1, (int)Math.Round(d));
+            if (double.IsNaN(d) || double.IsInfinity(d) || d < 0) 
+            {
+                if (Verbose) Print("[WARNING] ToPips calculation resulted in invalid value: {0}", d);
+                return 1;
+            }
+            
+            int pips = Math.Max(1, (int)Math.Round(d));
+            if (Verbose && pips != (int)Math.Round(d) && Math.Round(d) >= 1)
+                Print("[DEBUG] ToPips clamped from {0:F2} to {1}", d, pips);
+                
+            return pips;
     }
 
         private void CloseAll(TradeType side, string label)
